@@ -1,0 +1,36 @@
+spring:
+  application:
+    name: http-query-verb-example
+  datasource:
+    url: ${DB_URL:jdbc:postgresql://localhost:5432/doodle}
+    username: ${DB_USER:doodle}
+    password: ${DB_PASS:doodle}
+  jpa:
+    hibernate:
+      ddl-auto: update
+    open-in-view: false
+    show-sql: false
+
+server:
+  port: 8080
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info,prometheus,metrics
+  metrics:
+    export:
+      prometheus:
+        enabled: true
+    distribution:
+      percentiles-histogram:
+        http.server.requests: true
+      percentiles:
+        http.server.requests: 0.5,0.95,0.99
+
+springdoc:
+  swagger-ui:
+    path: /swagger-ui.html
+  api-docs:
+    path: /api-docs
