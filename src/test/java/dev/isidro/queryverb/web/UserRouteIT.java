@@ -69,4 +69,18 @@ class UserRouteIT {
 
         assertThat(restTemplate.getForEntity("/api/users", UserResponse[].class).getBody()).hasSize(2);
     }
+
+    @Test
+    void createUser_returns400_whenNameBlank() {
+        ResponseEntity<String> res = restTemplate.postForEntity(
+                "/api/users", new UserCreateRequest("", "alice@test.com"), String.class);
+        assertThat(res.getStatusCode()).isEqualTo(HttpStatus.BAD_REQUEST);
+    }
+
+    @Test
+    void createUser_returns400_whenEmailMalformed() {
+        ResponseEntity<String> res = restTemplate.postForEntity(
+                "/api/users", new UserCreateRequest("Alice", "not-an-email"), String.class);
+        assertThat(res.getStatusCode()).isEqualTo(HttpStatus.BAD_REQUEST);
+    }
 }

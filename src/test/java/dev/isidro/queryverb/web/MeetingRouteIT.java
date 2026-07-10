@@ -64,6 +64,29 @@ class MeetingRouteIT {
         assertThat(body.title()).isEqualTo("Standup");
         assertThat(body.slots()).hasSize(2);
         assertThat(body.slots()).extracting(SlotResponse::meetingId).doesNotContainNull();
+        assertThat(body.slots()).extracting(SlotResponse::userId).containsExactlyInAnyOrder(aliceId, bobId);
+    }
+
+    @Test
+    void schedule_returns400_whenTitleBlank() {
+        var req = new MeetingCreateRequest("", "Daily standup", List.of(bobSlotId));
+
+        ResponseEntity<String> res = restTemplate.postForEntity(
+                "/api/users/{uid}/slots/{sid}/meeting",
+                req, String.class, aliceId, aliceSlotId);
+
+        assertThat(res.getStatusCode()).isEqualTo(HttpStatus.BAD_REQUEST);
+    }
+
+    @Test
+    void schedule_returns400_whenParticipantSlotIdsEmpty() {
+        var req = new MeetingCreateRequest("Standup", "Daily standup", List.of());
+
+        ResponseEntity<String> res = restTemplate.postForEntity(
+                "/api/users/{uid}/slots/{sid}/meeting",
+                req, String.class, aliceId, aliceSlotId);
+
+        assertThat(res.getStatusCode()).isEqualTo(HttpStatus.BAD_REQUEST);
     }
 
     @Test

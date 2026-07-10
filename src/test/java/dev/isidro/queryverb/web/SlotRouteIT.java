@@ -17,12 +17,25 @@ import org.springframework.boot.resttestclient.TestRestTemplate;
 import org.springframework.boot.resttestclient.autoconfigure.AutoConfigureTestRestTemplate;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.boot.test.context.SpringBootTest.WebEnvironment;
-import org.springframework.http.*;
+import org.springframework.http.HttpEntity;
+import org.springframework.http.HttpHeaders;
+import org.springframework.http.HttpMethod;
+import org.springframework.http.HttpStatus;
+import org.springframework.http.HttpStatusCode;
+import org.springframework.http.MediaType;
+import org.springframework.http.ResponseEntity;
 import org.springframework.test.context.ActiveProfiles;
 
 import java.time.Instant;
 import java.time.temporal.ChronoUnit;
+import java.util.ArrayList;
 import java.util.List;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.Future;
+import java.util.concurrent.TimeUnit;
+import java.util.stream.IntStream;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
@@ -64,6 +77,7 @@ class SlotRouteIT {
         assertThat(res.getStatusCode()).isEqualTo(HttpStatus.OK);
         assertThat(res.getBody()).hasSize(1);
         assertThat(res.getBody()[0].status()).isEqualTo(SlotStatus.FREE);
+        assertThat(res.getBody()[0].userId()).isEqualTo(userId);
     }
 
     // ── QUERY (filter by body) ────────────────────────────────────────────────
@@ -93,6 +107,22 @@ class SlotRouteIT {
         assertThat(res.getBody()[0].startTime()).isEqualTo(T0);
     }
 
+    /**
+     * The core QUERY gotcha this project exists to demonstrate: some clients don't
+     * send a body at all for a non-standard method. A genuinely empty body must
+     * still be treated as "no filter", not rejected — see SlotHandler.parseFilter.
+     */
+    @Test
+    void querySlots_withNoBody_treatedAsNoFilter_returnsAllSlots() {
+        ResponseEntity<SlotResponse[]> res = restTemplate.exchange(
+                "/api/users/{uid}/slots", QUERY,
+                new HttpEntity<>(jsonHeaders()),
+                SlotResponse[].class, userId);
+
+        assertThat(res.getStatusCode()).isEqualTo(HttpStatus.OK);
+        assertThat(res.getBody()).hasSize(1);
+    }
+
     // ── GET (single) ──────────────────────────────────────────────────────────
 
     @Test
@@ -102,6 +132,7 @@ class SlotRouteIT {
 
         assertThat(res.getStatusCode()).isEqualTo(HttpStatus.OK);
         assertThat(res.getBody().id()).isEqualTo(slotId);
+        assertThat(res.getBody().userId()).isEqualTo(userId);
     }
 
     @Test
@@ -135,6 +166,53 @@ class SlotRouteIT {
         assertThat(res.getStatusCode()).isEqualTo(HttpStatus.CONFLICT);
     }
 
+    @Test
+    void createSlot_returns400_whenStartTimeMissing() {
+        ResponseEntity<String> res = restTemplate.postForEntity(
+                "/api/users/{uid}/slots", new SlotCreateRequest(null, T2), String.class, userId);
+
+        assertThat(res.getStatusCode()).isEqualTo(HttpStatus.BAD_REQUEST);
+    }
+
+    /**
+     * Regression test for the TOCTOU race SlotService.create() used to have: the
+     * overlap check and the insert weren't atomic, so two concurrent requests for
+     * the same window could both pass the check before either committed. Fires N
+     * concurrent requests for the exact same window and asserts the lock in
+     * CalendarRepository.findByOwnerIdForUpdate serializes them down to exactly
+     * one winner.
+     */
+    @Test
+    void createSlot_concurrentOverlappingRequests_onlyOneSucceeds() throws Exception {
+        var req = new SlotCreateRequest(T2, T3);
+        int threadCount = 8;
+
+        ExecutorService pool = Executors.newFixedThreadPool(threadCount);
+        CountDownLatch ready = new CountDownLatch(threadCount);
+        CountDownLatch go = new CountDownLatch(1);
+
+        List<Future<HttpStatusCode>> futures = IntStream.range(0, threadCount)
+                .<Future<HttpStatusCode>>mapToObj(i -> pool.submit(() -> {
+                    ready.countDown();
+                    go.await();
+                    return restTemplate.postForEntity(
+                            "/api/users/{uid}/slots", req, String.class, userId).getStatusCode();
+                }))
+                .toList();
+
+        assertThat(ready.await(5, TimeUnit.SECONDS)).isTrue();
+        go.countDown();
+
+        List<HttpStatusCode> statuses = new ArrayList<>();
+        for (Future<HttpStatusCode> f : futures) {
+            statuses.add(f.get(10, TimeUnit.SECONDS));
+        }
+        pool.shutdown();
+
+        assertThat(statuses).filteredOn(s -> s == HttpStatus.CREATED).hasSize(1);
+        assertThat(statuses).filteredOn(s -> s == HttpStatus.CONFLICT).hasSize(threadCount - 1);
+    }
+
     // ── PATCH (update) ────────────────────────────────────────────────────────
 
     @Test
@@ -147,6 +225,19 @@ class SlotRouteIT {
 
         assertThat(res.getStatusCode()).isEqualTo(HttpStatus.OK);
         assertThat(res.getBody().status()).isEqualTo(SlotStatus.BUSY);
+    }
+
+    @Test
+    void patchSlot_returns409_whenRescheduleOverlapsAnotherSlot() {
+        TestSupport.seedSlot(slotRepository, calendarRepository, userId, T2, T3);
+
+        HttpHeaders headers = jsonHeaders();
+        var req = new HttpEntity<>(new SlotUpdateRequest(T2, T3, null), headers);
+
+        ResponseEntity<String> res = restTemplate.exchange(
+                "/api/users/{uid}/slots/{sid}", HttpMethod.PATCH, req, String.class, userId, slotId);
+
+        assertThat(res.getStatusCode()).isEqualTo(HttpStatus.CONFLICT);
     }
 
     // ── DELETE ────────────────────────────────────────────────────────────────

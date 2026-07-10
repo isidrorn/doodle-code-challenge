@@ -90,6 +90,32 @@ class SlotServiceTest {
     }
 
     @Test
+    void update_throwsBadRequest_whenStartAfterEnd() {
+        Slot slot = new Slot(T0, T1);
+        when(slotRepository.findByUserIdAndSlotId(USER_ID, SLOT_ID)).thenReturn(Optional.of(slot));
+
+        assertThatThrownBy(() -> slotService.update(USER_ID, SLOT_ID, new SlotUpdateRequest(T2, T0, null)))
+                .isInstanceOf(ResponseStatusException.class)
+                .extracting(e -> ((ResponseStatusException) e).getStatusCode())
+                .isEqualTo(HttpStatus.BAD_REQUEST);
+    }
+
+    @Test
+    void update_throwsConflict_whenOverlapExists() {
+        Slot slot = new Slot(T0, T1);
+        User user = new User("Test", "test@test.com");
+        Calendar calendar = new Calendar(user);
+        when(slotRepository.findByUserIdAndSlotId(USER_ID, SLOT_ID)).thenReturn(Optional.of(slot));
+        when(calendarRepository.findByOwnerIdForUpdate(USER_ID)).thenReturn(Optional.of(calendar));
+        when(slotRepository.existsOverlap(eq(USER_ID), any(), any(), eq(SLOT_ID))).thenReturn(true);
+
+        assertThatThrownBy(() -> slotService.update(USER_ID, SLOT_ID, new SlotUpdateRequest(T2, T2.plusSeconds(3600), null)))
+                .isInstanceOf(ResponseStatusException.class)
+                .extracting(e -> ((ResponseStatusException) e).getStatusCode())
+                .isEqualTo(HttpStatus.CONFLICT);
+    }
+
+    @Test
     void update_marksSlotBusy_whenRequested() {
         Slot slot = new Slot(T0, T1);
         User user = new User("Test", "test@test.com");
