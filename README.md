@@ -30,6 +30,18 @@ User 1──1 Calendar 1──N Slot N──1 Meeting
   409 from the second writer.
 - `MeetingService.schedule()` additionally takes a `PESSIMISTIC_WRITE` lock on every slot involved,
   to close the gap between the availability check and the status update.
+- `SlotService.create()`/`update()` take the same kind of lock, but on the *parent* `Calendar` row
+  (`CalendarRepository.findByOwnerIdForUpdate`) rather than on individual `Slot` rows — a row-level
+  lock on existing rows can't close a phantom-read gap for a brand-new `INSERT`, so the overlap
+  check and the write are serialized per user's calendar instead. `SlotService.create()` builds the
+  new `Slot` via a `Slot(Calendar, Instant, Instant)` constructor that sets the FK directly, rather
+  than going through `Calendar.addSlot()` — the latter mutates (and thus forces a full load of)
+  `Calendar.slots`, which would mean reloading every existing slot for that user on every single
+  creation.
+- `SlotResponse` carries the owning `userId` (`slot.getCalendar().getOwner().getId()`), so a
+  scheduled meeting's participants are identifiable from `MeetingResponse.slots[].userId` — both
+  `Slot.calendar` and `Calendar.owner` are default-`EAGER` `@ManyToOne`/`@OneToOne`, so this doesn't
+  add a query.
 
 ## How QUERY is wired
 
@@ -69,6 +81,19 @@ Note: some HTTP clients (including `TestRestTemplate` in this project's own test
 `Content-Length` header for a body sent with a non-standard method like `QUERY`. Don't gate body
 parsing on `Content-Length` being present — just attempt to parse the body and treat a genuinely
 empty/absent one as "no filter" via the parse failure itself.
+
+## Validation
+
+Functional routes have no equivalent of `@Valid` on a `@RequestBody` parameter — `ServerRequest
+.body(Class)` never invokes a `Validator`, so the `@NotBlank`/`@NotNull`/`@Email`/`@NotEmpty`
+annotations on `UserCreateRequest`, `SlotCreateRequest`, and `MeetingCreateRequest` would otherwise
+never be checked, even with `spring-boot-starter-validation` on the classpath. Instead,
+[`RequestValidator`](src/main/java/dev/isidro/queryverb/web/RequestValidator.java) parses the body
+and runs it through the autoconfigured `jakarta.validation.Validator` explicitly, throwing a
+`ResponseStatusException(BAD_REQUEST, ...)` on the first set of violations — which
+`RouterExceptionFilter` turns into a ProblemDetail like any other. Every handler that parses a
+validated DTO calls `requestValidator.parseAndValidate(request, X.class)` instead of
+`request.body(X.class)` directly.
 
 ## API routes
 
@@ -146,17 +171,30 @@ mvn test -Dtest=*Test,*IT
 
 | Layer | Classes |
 |---|---|
-| Unit (Mockito, no Spring context) | `SlotServiceTest`, `MeetingServiceTest` |
-| Repository (`@DataJpaTest`) | `SlotRepositoryTest` |
+| Unit (Mockito, no Spring context) | `SlotServiceTest`, `MeetingServiceTest`, `RequestValidatorTest` |
+| Repository (`@DataJpaTest`) | `SlotRepositoryTest`, `CalendarRepositoryTest` |
 | Integration (`@SpringBootTest`, `RANDOM_PORT`, H2) | `UserRouteIT`, `SlotRouteIT`, `MeetingRouteIT` |
 
-Integration tests share seeding/cleanup helpers from
+51 tests total. Integration tests share seeding/cleanup helpers from
 [`TestSupport`](src/test/java/dev/isidro/queryverb/TestSupport.java) rather than a common base
 class — each IT class carries its own `@SpringBootTest`/`@AutoConfigureTestRestTemplate` setup.
 
+`SlotRouteIT.createSlot_concurrentOverlappingRequests_onlyOneSucceeds` is worth calling out
+specifically: it's a real concurrency test, not a unit test with mocked repositories — 8 threads
+race over real HTTP to create the exact same overlapping slot, synchronized with a
+`CountDownLatch`, asserting exactly one `201` and seven `409`s. It's what actually proves the
+`PESSIMISTIC_WRITE` locking in `SlotService` works, rather than just compiling.
+
 ## Relationship to the Doodle coding challenge
 
-This repo doubles as the submission for a "mini Doodle" scheduling coding challenge: the
-`User`/`Calendar`/`Slot`/`Meeting` domain, the repository query patterns, and the functional-route
-style aren't a separate exercise bolted on — this repository *is* the challenge submission, built
-around the `QUERY` verb demo rather than alongside it.
+This repo doubles as the submission for a "mini Doodle" scheduling coding challenge
+([`coding-challenge.md`](coding-challenge.md)): the `User`/`Calendar`/`Slot`/`Meeting` domain, the
+repository query patterns, and the functional-route style aren't a separate exercise bolted on —
+this repository *is* the challenge submission, built around the `QUERY` verb demo rather than
+alongside it.
+
+See [`spec-review.md`](spec-review.md) for the audit trail of validating this implementation
+against the spec: what was checked, what was found wrong (dead bean validation, a TOCTOU race in
+slot creation, meetings not exposing participants, an O(n) collection load on every slot create),
+exactly what changed to fix each one, and the test coverage that was missing and got added along
+the way — including one genuine concurrency test, not just mocked unit tests.
