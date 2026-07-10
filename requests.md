@@ -32,6 +32,11 @@ curl -s "$BASE/api/users/1" | jq
 curl -s -X POST "$BASE/api/users" \
   -H "Content-Type: application/json" \
   -d '{"name":"Carol","email":"carol@example.com"}' | jq
+
+# Invalid input → 400 with a ProblemDetail body (see RequestValidator)
+curl -s -w "\n%{http_code}\n" -X POST "$BASE/api/users" \
+  -H "Content-Type: application/json" \
+  -d '{"name":"","email":"not-an-email"}'
 ```
 
 ---

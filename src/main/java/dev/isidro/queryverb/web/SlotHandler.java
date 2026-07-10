@@ -17,6 +17,7 @@ public class SlotHandler {
 
     private final SlotService slotService;
     private final SlotMapper slotMapper;
+    private final RequestValidator requestValidator;
 
     public ServerResponse getOne(ServerRequest request) throws Exception {
         return ok(slotMapper.toResponse(slotService.requireOwned(userId(request), slotId(request))));
@@ -44,7 +45,7 @@ public class SlotHandler {
 
     public ServerResponse create(ServerRequest request) throws Exception {
         Long userId = userId(request);
-        var slot = slotService.create(userId, request.body(SlotCreateRequest.class));
+        var slot = slotService.create(userId, requestValidator.parseAndValidate(request, SlotCreateRequest.class));
         return ServerResponse.status(201).contentType(MediaType.APPLICATION_JSON)
                 .body(slotMapper.toResponse(slot));
     }

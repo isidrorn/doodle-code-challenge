@@ -15,6 +15,7 @@ public class UserHandler {
 
     private final UserService userService;
     private final UserMapper userMapper;
+    private final RequestValidator requestValidator;
 
     public ServerResponse listAll(ServerRequest request) throws Exception {
         var body = userService.findAll().stream().map(userMapper::toResponse).toList();
@@ -27,7 +28,7 @@ public class UserHandler {
     }
 
     public ServerResponse create(ServerRequest request) throws Exception {
-        var user = userService.create(request.body(UserCreateRequest.class));
+        var user = userService.create(requestValidator.parseAndValidate(request, UserCreateRequest.class));
         return ServerResponse.status(201).contentType(MediaType.APPLICATION_JSON)
                 .body(userMapper.toResponse(user));
     }

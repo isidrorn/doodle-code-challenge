@@ -15,11 +15,12 @@ public class MeetingHandler {
 
     private final MeetingService meetingService;
     private final MeetingMapper meetingMapper;
+    private final RequestValidator requestValidator;
 
     public ServerResponse schedule(ServerRequest request) throws Exception {
         Long userId = Long.valueOf(request.pathVariable("userId"));
         Long slotId = Long.valueOf(request.pathVariable("slotId"));
-        var meeting = meetingService.schedule(userId, slotId, request.body(MeetingCreateRequest.class));
+        var meeting = meetingService.schedule(userId, slotId, requestValidator.parseAndValidate(request, MeetingCreateRequest.class));
         return ServerResponse.status(201).contentType(MediaType.APPLICATION_JSON)
                 .body(meetingMapper.toResponse(meeting));
     }
