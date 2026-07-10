@@ -2,7 +2,6 @@ package dev.isidro.queryverb.service;
 
 import dev.isidro.queryverb.domain.Calendar;
 import dev.isidro.queryverb.domain.User;
-import dev.isidro.queryverb.repository.CalendarRepository;
 import dev.isidro.queryverb.repository.UserRepository;
 import dev.isidro.queryverb.web.dto.UserCreateRequest;
 import java.util.List;
@@ -18,7 +17,6 @@ import org.springframework.web.server.ResponseStatusException;
 public class UserService {
 
     private final UserRepository userRepository;
-    private final CalendarRepository calendarRepository;
 
     @Transactional(readOnly = true)
     public List<User> findAll() {
@@ -33,8 +31,8 @@ public class UserService {
 
     public User create(UserCreateRequest request) {
         User user = new User(request.name(), request.email());
-        Calendar calendar = new Calendar(user);
-        calendarRepository.save(calendar);
+        new Calendar(user);
+        userRepository.save(user);
         return user;
     }
 }

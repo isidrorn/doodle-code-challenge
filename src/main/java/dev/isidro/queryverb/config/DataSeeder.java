@@ -3,7 +3,7 @@ package dev.isidro.queryverb.config;
 import dev.isidro.queryverb.domain.Calendar;
 import dev.isidro.queryverb.domain.Slot;
 import dev.isidro.queryverb.domain.User;
-import dev.isidro.queryverb.repository.CalendarRepository;
+import dev.isidro.queryverb.repository.UserRepository;
 import java.time.Instant;
 import java.time.temporal.ChronoUnit;
 import lombok.RequiredArgsConstructor;
@@ -20,7 +20,7 @@ import org.springframework.transaction.annotation.Transactional;
 @Slf4j
 public class DataSeeder implements ApplicationRunner {
 
-    private final CalendarRepository calendarRepository;
+    private final UserRepository userRepository;
 
     @Override
     @Transactional
@@ -39,7 +39,7 @@ public class DataSeeder implements ApplicationRunner {
         calendar.addSlot(new Slot(now.plus(2, ChronoUnit.HOURS), now.plus(3, ChronoUnit.HOURS)));
         calendar.addSlot(new Slot(now.plus(1, ChronoUnit.DAYS),  now.plus(1, ChronoUnit.DAYS).plus(1, ChronoUnit.HOURS)));
 
-        calendarRepository.save(calendar);
+        userRepository.save(user);
         log.info("Seeded user='{}' userId={} calendarId={}", name, user.getId(), calendar.getId());
     }
 }
