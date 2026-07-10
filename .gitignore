@@ -1,6 +1,14 @@
 target/
 *.class
-.idea/workspace.xml
-.idea/shelf/
+.idea/
 *.iml
 .DS_Store
+
+# Local Claude Code permissions/state — personal to each contributor's machine
+.claude/settings.local.json
+
+# Local-only working notes — not meant for the public repo (superseded by CLAUDE.md /
+# spec-review.md, or otherwise private): the original take-home prompt and the informal
+# planning brief used while building this out
+coding-challenge.md
+claude-code-brief.md
