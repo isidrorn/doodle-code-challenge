@@ -37,7 +37,8 @@ User 1──1 Calendar 1──N Slot N──1 Meeting
   new `Slot` via a `Slot(Calendar, Instant, Instant)` constructor that sets the FK directly, rather
   than going through `Calendar.addSlot()` — the latter mutates (and thus forces a full load of)
   `Calendar.slots`, which would mean reloading every existing slot for that user on every single
-  creation.
+  creation. See [`spec-review.md`](spec-review.md#2-toctou-race-between-the-overlap-check-and-the-insertupdate)
+  for how this was found and verified.
 - `SlotResponse` carries the owning `userId` (`slot.getCalendar().getOwner().getId()`), so a
   scheduled meeting's participants are identifiable from `MeetingResponse.slots[].userId` — both
   `Slot.calendar` and `Calendar.owner` are default-`EAGER` `@ManyToOne`/`@OneToOne`, so this doesn't
@@ -137,8 +138,10 @@ check the logs for their generated `userId`s.
 
 ## Consume
 
-See [`requests.md`](requests.md) for a full set of copy-pasteable `curl` examples covering users,
-slots (including all three `QUERY` filter variants), and meetings.
+- [`api-examples.md`](api-examples.md) — a full set of copy-pasteable `curl` examples covering
+  users, slots (including all `QUERY` filter variants and the overlap-conflict case), and meetings.
+- [`demo.sh`](demo.sh) — a runnable, self-contained walkthrough of the same flow end-to-end against
+  a live instance (`./demo.sh`, requires `curl` + `jq`); prints every request and response as it goes.
 
 ```bash
 # List all slots
@@ -187,11 +190,12 @@ race over real HTTP to create the exact same overlapping slot, synchronized with
 
 ## Relationship to the Doodle coding challenge
 
-This repo doubles as the submission for a "mini Doodle" scheduling coding challenge
-([`coding-challenge.md`](coding-challenge.md)): the `User`/`Calendar`/`Slot`/`Meeting` domain, the
-repository query patterns, and the functional-route style aren't a separate exercise bolted on —
-this repository *is* the challenge submission, built around the `QUERY` verb demo rather than
-alongside it.
+This repo doubles as the submission for a "mini Doodle" scheduling backend take-home challenge: the
+`User`/`Calendar`/`Slot`/`Meeting` domain, the repository query patterns, and the functional-route
+style aren't a separate exercise bolted on — this repository *is* the challenge submission, built
+around the `QUERY` verb demo rather than alongside it. (The original prompt isn't included in this
+repo, since take-home exercises are typically not meant to be republished — but the requirements it
+covers are summarized in [`spec-review.md`](spec-review.md).)
 
 See [`spec-review.md`](spec-review.md) for the audit trail of validating this implementation
 against the spec: what was checked, what was found wrong (dead bean validation, a TOCTOU race in

@@ -1,11 +1,13 @@
-# Spec review: from `coding-challenge.md` to the current implementation
+# Spec review: validating the implementation against the original brief
 
-This is the audit trail for validating the "mini Doodle" implementation against
-[`coding-challenge.md`](coding-challenge.md). It records what was checked, what was found wrong or
-missing, and exactly what changed to fix it — so the reasoning survives past the commit history.
-Everything below was verified against a **running instance** (`mvn spring-boot:run
--Dspring-boot.run.profiles=local`, real `curl` requests), not just by reading code or trusting green
-tests.
+This is the audit trail for validating the "mini Doodle" implementation against the backend
+take-home brief it was built for (a scheduling platform: users manage time slots on a personal
+calendar and convert them into meetings — the original prompt itself isn't included in this repo,
+since take-home exercises are typically not meant to be republished). It records what was checked,
+what was found wrong or missing, and exactly what changed to fix it — so the reasoning survives past
+the commit history. Everything below was verified against a **running instance** (`mvn
+spring-boot:run -Dspring-boot.run.profiles=local`, real `curl` requests), not just by reading code
+or trusting green tests.
 
 ## Spec compliance at the time of review
 
