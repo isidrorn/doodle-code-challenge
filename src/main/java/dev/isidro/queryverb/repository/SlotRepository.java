@@ -13,12 +13,19 @@ import jakarta.persistence.LockModeType;
 
 public interface SlotRepository extends JpaRepository<Slot, Long> {
 
+    /**
+     * Each optional filter is CAST explicitly: PostgreSQL's extended query protocol
+     * resolves a bind parameter's type at Parse time from its surrounding SQL context,
+     * and a bare "? is null" (no comparison, no cast) gives it nothing to infer from —
+     * "could not determine data type of parameter $n". H2 (used in tests) doesn't
+     * enforce this, which is why this only surfaces against a real Postgres.
+     */
     @Query("""
             select s from Slot s
             where s.calendar.owner.id = :userId
-              and (:status is null or s.status = :status)
-              and (:from is null or s.endTime >= :from)
-              and (:to   is null or s.startTime <= :to)
+              and (cast(:status as string)    is null or s.status = :status)
+              and (cast(:from as Instant) is null or s.endTime >= :from)
+              and (cast(:to   as Instant) is null or s.startTime <= :to)
             order by s.startTime asc
             """)
     List<Slot> search(
@@ -37,7 +44,7 @@ public interface SlotRepository extends JpaRepository<Slot, Long> {
             where s.calendar.owner.id = :userId
               and s.startTime < :endTime
               and s.endTime   > :startTime
-              and (:excludeId is null or s.id != :excludeId)
+              and (cast(:excludeId as long) is null or s.id != :excludeId)
             """)
     boolean existsOverlap(
             @Param("userId")    Long userId,
