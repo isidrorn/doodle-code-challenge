@@ -69,9 +69,14 @@ public class SlotHandler {
         return Long.valueOf(req.pathVariable("slotId"));
     }
 
+    /**
+     * Content-Length is unreliable here: the QUERY verb isn't recognized by every
+     * HTTP client as carrying a body, so some clients omit the header even when a
+     * body is present. Just attempt to parse it; an empty/absent body still maps
+     * to "no filter" via the catch.
+     */
     private SlotQueryFilter parseFilter(ServerRequest request) {
         try {
-            if (request.headers().contentLength().orElse(0) == 0) return SlotQueryFilter.empty();
             return request.body(SlotQueryFilter.class);
         } catch (Exception e) {
             return SlotQueryFilter.empty();
