@@ -40,7 +40,8 @@ docker-compose up                                       # PostgreSQL
 
 App starts on `http://localhost:8080`; `DataSeeder` seeds two users (Alice, Bob) with a few slots
 each — check the startup logs for their generated `userId`s. Swagger UI at `/swagger-ui.html`,
-Prometheus metrics at `/actuator/prometheus`. See `requests.md` for a full set of `curl` examples.
+Prometheus metrics at `/actuator/prometheus`. See `api-examples.md` for a full set of `curl`
+examples, or run `./demo.sh` for a scripted end-to-end walkthrough against a live instance.
 
 ## Architecture
 
@@ -87,6 +88,19 @@ own tests) don't set a `Content-Length` header for a body sent with a non-standa
 gate body parsing on `Content-Length` being present — attempt the parse and treat a genuinely
 empty/absent body as "no filter" via the parse failure itself (see `SlotHandler.parseFilter`).
 
+### Validation
+
+Functional routes have no equivalent of `@Valid` on a `@RequestBody` parameter —
+`ServerRequest.body(Class)` never invokes a `Validator`, so the `@NotBlank`/`@NotNull`/`@Email`/
+`@NotEmpty` annotations on `UserCreateRequest`, `SlotCreateRequest`, and `MeetingCreateRequest`
+would silently never be checked, even with `spring-boot-starter-validation` on the classpath. Every
+handler that parses one of those DTOs must go through
+[`RequestValidator`](src/main/java/dev/isidro/queryverb/web/RequestValidator.java)
+(`requestValidator.parseAndValidate(request, X.class)`) instead of calling `request.body(X.class)`
+directly — it runs the autoconfigured `jakarta.validation.Validator` explicitly and throws
+`ResponseStatusException(BAD_REQUEST, ...)` on violations. A new validated DTO/handler that skips
+this and calls `request.body(...)` directly will compile fine and silently accept invalid input.
+
 ### Domain
 
 ```
@@ -105,11 +119,28 @@ User 1──1 Calendar 1──N Slot N──1 Meeting
 - `MeetingService.schedule()` additionally takes a `PESSIMISTIC_WRITE` lock
   (`SlotRepository.findByIdForUpdate`) on every slot involved, closing the gap between the
   availability check and the status update.
+- `SlotService.create()`/`update()` take the same kind of lock, but on the *parent* `Calendar` row
+  (`CalendarRepository.findByOwnerIdForUpdate`) rather than on individual `Slot` rows — an existing
+  row's lock can't close a phantom-read gap for a brand-new `INSERT`, so the overlap check and the
+  write are serialized per user's calendar instead. `SlotService.create()` builds the new `Slot` via
+  a `Slot(Calendar, Instant, Instant)` constructor that sets the FK directly, rather than going
+  through `Calendar.addSlot()` — the latter mutates (and thus forces a full load of)
+  `Calendar.slots`, which would mean reloading every existing slot for that user on every creation.
+  `Calendar.addSlot()` itself is still fine to use where the collection is already needed (e.g.
+  `DataSeeder`, `TestSupport.seedSlot`) — just don't reach for it on a hot, per-request path.
 - `spring.jpa.open-in-view: false` is set deliberately. Any repository method whose result gets
   read after its `@Transactional` service method returns (e.g. a mapper touching a lazy
   `@OneToMany`) must eagerly fetch what it needs — see `CalendarRepository.findByOwnerId` and
   `MeetingRepository.findById`, both annotated `@EntityGraph(attributePaths = "...")` for exactly
   this reason. Don't "fix" a `LazyInitializationException` by re-enabling open-in-view.
+- **`@EntityGraph(attributePaths = ...)` is a JPA *fetch graph*, not just an eager-fetch hint: any
+  association NOT listed in it gets demoted to `LAZY`, even if its own mapping is `EAGER` by
+  default.** `MeetingRepository.findById()` needs `"slots"` eagerly loaded, but `Slot.calendar` and
+  `Calendar.owner` (both default-`EAGER`) had to be listed too
+  (`{"slots", "slots.calendar", "slots.calendar.owner"}`) the moment `SlotMapper` started reading
+  `slot.getCalendar().getOwner().getId()` — otherwise it's a `LazyInitializationException` outside
+  the transaction (open-in-view is off) the instant something reads one step further into the graph
+  than whoever wrote the `@EntityGraph` originally needed.
 - **A JPQL bind parameter used only in a bare `(:param is null or ...)` check breaks on real
   Postgres, but not on H2.** Postgres's extended query protocol resolves a parameter's type at
   parse time from its surrounding SQL; a standalone `? IS NULL` with no comparison/cast gives it
@@ -145,9 +176,16 @@ GET    /api/meetings/{meetingId}                    get meeting
 
 | Layer | Classes | Notes |
 |---|---|---|
-| Unit (Mockito, no Spring context) | `SlotServiceTest`, `MeetingServiceTest` | |
-| Repository (`@DataJpaTest`) | `SlotRepositoryTest` | |
+| Unit (Mockito, no Spring context) | `SlotServiceTest`, `MeetingServiceTest`, `RequestValidatorTest` | |
+| Repository (`@DataJpaTest`) | `SlotRepositoryTest`, `CalendarRepositoryTest` | |
 | Integration (`@SpringBootTest`, `RANDOM_PORT`, H2) | `UserRouteIT`, `SlotRouteIT`, `MeetingRouteIT` | real socket via `TestRestTemplate`, not MockMvc |
+
+`SlotRouteIT.createSlot_concurrentOverlappingRequests_onlyOneSucceeds` is a real concurrency test
+(8 threads racing over real HTTP, synchronized with a `CountDownLatch`) proving the
+`PESSIMISTIC_WRITE` locking in `SlotService` actually serializes writers — not a mocked unit test.
+If you touch the locking in `SlotService.create()`/`update()`, run this one specifically
+(`mvn test -Dtest=SlotRouteIT#createSlot_concurrentOverlappingRequests_onlyOneSucceeds`), ideally a
+few times in a row, since a broken lock would only show up as occasional extra `201`s.
 
 - No shared base class for IT tests — each `*RouteIT` carries its own
   `@SpringBootTest(webEnvironment = RANDOM_PORT)` + `@AutoConfigureTestRestTemplate` +
@@ -164,3 +202,13 @@ GET    /api/meetings/{meetingId}                    get meeting
 - `@MockBean`/`@SpyBean` are gone in Spring Boot 4 — use plain `@Mock` +
   `@ExtendWith(MockitoExtension.class)` for unit tests.
 - `DataSeeder` is excluded under the `test` profile (`@Profile("!test")`).
+
+## Prior spec-compliance review
+
+[`spec-review.md`](spec-review.md) is a **historical record**, not a current TODO list: it documents
+a pass that checked this implementation against `coding-challenge.md`, found four issues (dead bean
+validation, a TOCTOU race in slot creation, meetings not exposing participants, an O(n) collection
+load on every slot create), and fixed all four — the "Issues found and fixed" section describes bugs
+that no longer exist in the current code. Don't re-fix them; do read it before touching
+`SlotService`, `CalendarRepository`, or the `web/dto` validation wiring, since it explains *why* the
+current shape looks the way it does.
