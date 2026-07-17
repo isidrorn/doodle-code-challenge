@@ -1,7 +1,7 @@
 package dev.isidro.queryverb.web;
 
 import dev.isidro.queryverb.service.SlotService;
-import dev.isidro.queryverb.web.dto.SlotCreateRequest;
+import dev.isidro.queryverb.web.dto.SlotBulkCreateRequest;
 import dev.isidro.queryverb.web.dto.SlotQueryFilter;
 import dev.isidro.queryverb.web.dto.SlotUpdateRequest;
 import dev.isidro.queryverb.web.mapper.SlotMapper;
@@ -43,11 +43,13 @@ public class SlotHandler {
         return ok(body);
     }
 
+    /** Bulk-creates every requested slot in one transaction; see SlotService.create. */
     public ServerResponse create(ServerRequest request) throws Exception {
         Long userId = userId(request);
-        var slot = slotService.create(userId, requestValidator.parseAndValidate(request, SlotCreateRequest.class));
-        return ServerResponse.status(201).contentType(MediaType.APPLICATION_JSON)
-                .body(slotMapper.toResponse(slot));
+        var body = requestValidator.parseAndValidate(request, SlotBulkCreateRequest.class);
+        var slots = slotService.create(userId, body)
+                .stream().map(slotMapper::toResponse).toList();
+        return ServerResponse.status(201).contentType(MediaType.APPLICATION_JSON).body(slots);
     }
 
     public ServerResponse update(ServerRequest request) throws Exception {

@@ -26,14 +26,15 @@ import org.springframework.web.servlet.function.ServerResponse;
  *
  * GET    /api/users/{userId}/slots                          → list all slots
  * QUERY  /api/users/{userId}/slots                          → filter slots by body
- * POST   /api/users/{userId}/slots                          → create slot
+ * POST   /api/users/{userId}/slots                          → bulk-create slots
  * GET    /api/users/{userId}/slots/{slotId}                 → get slot
  * PATCH  /api/users/{userId}/slots/{slotId}                 → update slot
  * DELETE /api/users/{userId}/slots/{slotId}                 → delete slot
  *
- * POST   /api/users/{userId}/slots/{slotId}/meeting         → convert to meeting
- * DELETE /api/users/{userId}/slots/{slotId}/meeting         → cancel meeting
+ * POST   /api/meetings                                      → propose a meeting
  * GET    /api/meetings/{meetingId}                          → get meeting
+ * DELETE /api/meetings/{meetingId}                          → cancel meeting (organizer only)
+ * POST   /api/meetings/{meetingId}/participants/{userId}/vote → cast a vote
  * </pre>
  */
 @Configuration
@@ -44,8 +45,9 @@ public class SlotRouterConfig {
     private static final String     USER    = "/api/users/{userId}";
     private static final String     SLOTS   = "/api/users/{userId}/slots";
     private static final String     SLOT    = "/api/users/{userId}/slots/{slotId}";
-    private static final String     MEETING = "/api/users/{userId}/slots/{slotId}/meeting";
+    private static final String     MEETINGS      = "/api/meetings";
     private static final String     MEETING_BY_ID = "/api/meetings/{meetingId}";
+    private static final String     MEETING_VOTE  = "/api/meetings/{meetingId}/participants/{userId}/vote";
 
     @Bean
     public RouterFunction<ServerResponse> routes(UserHandler users, SlotHandler slots,
@@ -64,9 +66,10 @@ public class SlotRouterConfig {
                 .PATCH(SLOT, contentType(MediaType.APPLICATION_JSON), slots::update)
                 .DELETE(SLOT, accept(MediaType.APPLICATION_JSON), slots::delete)
                 // Meetings
-                .POST(MEETING,   contentType(MediaType.APPLICATION_JSON), meetings::schedule)
-                .DELETE(MEETING, accept(MediaType.APPLICATION_JSON), meetings::cancel)
+                .POST(MEETINGS, contentType(MediaType.APPLICATION_JSON), meetings::create)
                 .GET(MEETING_BY_ID, accept(MediaType.APPLICATION_JSON), meetings::getOne)
+                .DELETE(MEETING_BY_ID, contentType(MediaType.APPLICATION_JSON), meetings::cancel)
+                .POST(MEETING_VOTE, contentType(MediaType.APPLICATION_JSON), meetings::vote)
                 .build()
                 .filter(exceptionFilter::filter);
     }
