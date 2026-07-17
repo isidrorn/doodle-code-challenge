@@ -97,6 +97,14 @@ echo "Created userId=$ALICE_ID (Alice), userId=$BOB_ID (Bob), userId=$CAROL_ID (
 section "Validation: blank name + malformed email → 400"
 call POST /api/users '{"name":"","email":"not-an-email"}'
 
+section "Validation: non-numeric path id → 400, not 500"
+echo "(this used to 500 — Swagger UI's default placeholder for an untyped path parameter is the"
+echo " literal string 'string', which used to reach Long.valueOf(...) uncaught. See troubleshooting.md.)"
+call GET /api/users/not-a-number
+
+section "Validation: malformed JSON body → 400, not 500"
+call POST /api/users '{not valid json'
+
 # ── 2. slots ──────────────────────────────────────────────────────────────────
 
 # Round up to the next slot-grid boundary, one day out, so this never collides with a
@@ -109,6 +117,7 @@ MEETING_END=$(iso_from_epoch $((GRID_START + 2 * SLOT)))
 
 section "Bulk-create two consecutive slots for Alice and for Bob (same window)"
 call POST "/api/users/$ALICE_ID/slots" "{\"startTimes\":[\"$S1_START\",\"$S2_START\"]}"
+ALICE_SLOT1=$(jq -r .[0].id <<<"$HTTP_BODY")
 
 call POST "/api/users/$BOB_ID/slots" "{\"startTimes\":[\"$S1_START\",\"$S2_START\"]}"
 
@@ -134,6 +143,9 @@ call POST "/api/users/$ALICE_ID/slots" "{\"startTimes\":[\"$(iso_from_epoch $((G
 
 section "Bulk-create a slot that already exists → 409, whole batch fails"
 call POST "/api/users/$ALICE_ID/slots" "{\"startTimes\":[\"$S1_START\"]}"
+
+section "Validation: PATCH with an invalid status value → 400, not 500"
+call PATCH "/api/users/$ALICE_ID/slots/$ALICE_SLOT1" '{"status":"NOT_A_STATUS"}'
 
 # ── 3. meetings ───────────────────────────────────────────────────────────────
 

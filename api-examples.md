@@ -29,6 +29,38 @@ satisfy `epochSecond % (slotDurationMinutes * 60) == 0` or the request is reject
 
 ---
 
+## Input validation
+
+Applies across every route in this API, not just one resource — every `{userId}`/`{slotId}`/
+`{meetingId}` path segment and every request body is validated before it reaches business logic:
+
+```bash
+# A path id that isn't a number → 400, not a 500. (This used to 500: Swagger UI's default
+# placeholder for an untyped path parameter is the literal string "string", which used to reach
+# Long.valueOf(...) uncaught. See RequestValidator.parseId / troubleshooting.md.)
+curl -s -w "\n%{http_code}\n" "$BASE/api/users/not-a-number"
+
+# Same fix applies to every id-shaped path variable, everywhere it appears
+curl -s -w "\n%{http_code}\n" "$BASE/api/users/1/slots/not-a-number"
+curl -s -w "\n%{http_code}\n" "$BASE/api/meetings/not-a-number"
+
+# A body that isn't valid JSON at all → 400 with the parser's own error, not a 500
+curl -s -w "\n%{http_code}\n" -X POST "$BASE/api/users" \
+  -H "Content-Type: application/json" \
+  -d '{not valid json'
+
+# A body field with a value that doesn't match its declared type (here, an enum) → 400
+curl -s -w "\n%{http_code}\n" -X PATCH "$BASE/api/users/1/slots/1" \
+  -H "Content-Type: application/json" \
+  -d '{"status":"NOT_A_STATUS"}'
+
+# A syntactically valid but nonexistent id is a 404, not a 400 — parseId only rejects
+# things that aren't numbers at all, not numbers that don't happen to match a row
+curl -s -w "\n%{http_code}\n" "$BASE/api/users/999999"
+```
+
+---
+
 ## Users
 
 ```bash

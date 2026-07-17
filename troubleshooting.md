@@ -251,7 +251,7 @@ time it reaches the browser — nothing requires it to have been produced entire
 
 ## 13. The actual fix: post-process the already-serialized JSON, below springdoc/swagger-core entirely
 
-**Fix**: [`OpenApiQueryOperationFilter`](src/main/java/dev/isidro/queryverb/config/OpenApiQueryOperationFilter.java)
+**Fix**: [`OpenApiQueryOperationFilter`](src/main/java/io/irn/minidoodle/config/OpenApiQueryOperationFilter.java)
 is a servlet `Filter` mapped to `/api-docs` that runs *after* springdoc has fully produced its normal
 document (using `ContentCachingResponseWrapper` to capture the response body): it parses the JSON,
 renames the `x-query` extension (built by `OpenApiQuerySupportConfig`) to a real `query` sibling of
@@ -308,3 +308,11 @@ Three cooperating pieces, none of which alone was sufficient:
 
 Full test suite: 84/84 throughout every step above — each fix was verified against the running
 application (both local H2 and `docker-compose` Postgres profiles), not just against `mvn test`.
+
+---
+
+Not in this file, because it isn't QUERY-specific — a bad path parameter type (any `{userId}`/
+`{slotId}`/`{meetingId}`, on any route) and a malformed/mistyped request body (any route with a
+body) both used to 500 instead of 400. Same underlying pattern as some of the errors above (a client
+mistake reaching an uncaught exception and falling through to the generic 500 handler), but it isn't
+about `QUERY` — see [`design-decisions-v3.md`](design-decisions-v3.md) instead.

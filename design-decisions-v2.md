@@ -65,7 +65,7 @@ Validating the grid in exactly one of the two mutation paths would leave a hole,
 (the first draft's shape, changed on review).** It's a plain
 `@ConfigurationProperties(prefix = "scheduling") record SlotDurationConfig(int slotDurationMinutes)`
 with no stereotype annotation on the class itself — registration happens once, explicitly, via
-`@ConfigurationPropertiesScan` on `Application.java`, rather than the properties class doubling as
+`@ConfigurationPropertiesScan` on `MiniDoodleApplication.java`, rather than the properties class doubling as
 a generic `@Component`. This matches the record style already used for every DTO in this codebase
 and keeps the properties class an immutable, framework-registration-free data holder. The compact
 constructor's `slotDurationMinutes <= 0 → 30` fallback exists because constructor-bound properties
@@ -162,7 +162,7 @@ one bad route in any bean kills `/api-docs` for the entire application, not just
 
 **Fix**, in two parts:
 
-1. [`SpringDocResilienceConfig`](src/main/java/dev/isidro/queryverb/config/SpringDocResilienceConfig.java)
+1. [`SpringDocResilienceConfig`](src/main/java/io/irn/minidoodle/config/SpringDocResilienceConfig.java)
    replaces springdoc's default `RouterFunctionProvider` bean with one that wraps each `RouterFunction`
    bean's traversal in a try/catch, logging and skipping any bean that fails instead of propagating.
    Getting Spring to actually use this bean over springdoc's own took two more findings, both from
@@ -180,7 +180,7 @@ one bad route in any bean kills `/api-docs` for the entire application, not just
      `routerFunctionProvider` — silently preferring springdoc's bean over this one regardless of what
      this one was named. `@Primary` is what actually wins that tie.
 
-2. [`SlotRouterConfig`](src/main/java/dev/isidro/queryverb/web/SlotRouterConfig.java) splits the
+2. [`SlotRouterConfig`](src/main/java/io/irn/minidoodle/web/SlotRouterConfig.java) splits the
    QUERY route into its own `@Bean`, separate from every other route. This isn't cosmetic: since all
    routes originally lived in *one* `RouterFunction` bean, the try/catch in (1) — before this split —
    caught the exception but had to discard the *entire* bean's routes, not just QUERY, since the
@@ -284,7 +284,7 @@ doesn't exist:
   resembling a YAML-merge mechanism anywhere in that class.
 
 **What's actually implemented, corrected from that proposal**:
-[`OpenApiQuerySupportConfig`](src/main/java/dev/isidro/queryverb/config/OpenApiQuerySupportConfig.java)
+[`OpenApiQuerySupportConfig`](src/main/java/io/irn/minidoodle/config/OpenApiQuerySupportConfig.java)
 adds an `OpenApiCustomizer` bean that attaches the QUERY operation under the spec-compliant
 `x-query` key on the `/api/users/{userId}/slots` `PathItem`, with `SlotQueryFilter`/`SlotResponse`
 schemas registered into `#/components/schemas` by reflecting the real DTOs via swagger-core's
@@ -325,7 +325,7 @@ swagger-core (the Java-side dependencies) to support OpenAPI 3.2 at all — they
 of the JSON string that ends up in the browser, and nothing requires that JSON to have been produced
 by fields on `io.swagger.v3.oas.models.PathItem`.
 
-[`OpenApiQueryOperationFilter`](src/main/java/dev/isidro/queryverb/config/OpenApiQueryOperationFilter.java)
+[`OpenApiQueryOperationFilter`](src/main/java/io/irn/minidoodle/config/OpenApiQueryOperationFilter.java)
 is a servlet `Filter` (not a springdoc/swagger-core hook — deliberately below that layer) mapped to
 `/api-docs`, that runs *after* springdoc has fully produced its normal document: it parses the
 already-serialized JSON, renames the `x-query` extension (built by `OpenApiQuerySupportConfig`,

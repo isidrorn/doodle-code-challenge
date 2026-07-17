@@ -64,7 +64,7 @@ writes *per user's calendar* — locking the parent row (not the individual slot
 a phantom-read gap for a brand-new INSERT, which per-row locking on existing rows can't do.
 
 Verified with a real concurrency test, not just by reading the code — see
-[`SlotRouteIT.createSlot_concurrentOverlappingRequests_onlyOneSucceeds`](src/test/java/dev/isidro/queryverb/web/SlotRouteIT.java):
+[`SlotRouteIT.createSlot_concurrentOverlappingRequests_onlyOneSucceeds`](src/test/java/io/irn/minidoodle/web/SlotRouteIT.java):
 8 threads race to create the exact same overlapping slot; exactly one gets `201`, the rest get
 `409`. Run 5 times in a row with no flakes.
 
