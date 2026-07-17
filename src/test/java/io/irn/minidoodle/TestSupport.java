@@ -1,0 +1,58 @@
+package io.irn.minidoodle;
+
+import io.irn.minidoodle.domain.Calendar;
+import io.irn.minidoodle.domain.Slot;
+import io.irn.minidoodle.domain.User;
+import io.irn.minidoodle.repository.CalendarRepository;
+import io.irn.minidoodle.repository.MeetingParticipantRepository;
+import io.irn.minidoodle.repository.MeetingRepository;
+import io.irn.minidoodle.repository.SlotRepository;
+import io.irn.minidoodle.repository.UserRepository;
+import java.time.Instant;
+
+/** Static test helpers shared across IT tests — no Spring context, no inheritance. */
+public final class TestSupport {
+
+    private TestSupport() {}
+
+    /**
+     * Deletes all data in FK-safe order: meeting_participant → meeting (which also clears the
+     * slot_meeting join table it owns) → slot → calendar → user.
+     */
+    public static void cleanUp(SlotRepository slots, MeetingRepository meetings,
+                                MeetingParticipantRepository meetingParticipants,
+                                CalendarRepository calendars, UserRepository users) {
+        meetingParticipants.deleteAll();
+        meetings.deleteAll();
+        slots.deleteAll();
+        calendars.deleteAll();
+        users.deleteAll();
+    }
+
+    /**
+     * Creates a User + Calendar and returns the userId.
+     * Persists via userRepository so the User→Calendar cascade (CascadeType.ALL) fires correctly.
+     */
+    public static Long seedUser(UserRepository userRepo, CalendarRepository calRepo,
+                                String name, String email) {
+        User user = new User(name, email);
+        Calendar calendar = new Calendar(user);   // sets user.calendar via assignCalendar()
+        userRepo.save(user);                       // cascade ALL → saves Calendar too
+        return user.getId();
+    }
+
+    /**
+     * Adds a FREE slot to the user's calendar and returns the slotId.
+     *
+     * <p>Saves via slotRepository (not calRepo.save(cal)): the fetched Calendar
+     * already has an id, so JpaRepository.save would merge() it into a detached
+     * copy and leave our in-memory {@code slot}'s generated id null.
+     */
+    public static Long seedSlot(SlotRepository slotRepo, CalendarRepository calRepo,
+                                 Long userId, Instant start, Instant end) {
+        Calendar cal = calRepo.findByOwnerId(userId).orElseThrow();
+        Slot slot = new Slot(start, end);
+        cal.addSlot(slot);
+        return slotRepo.save(slot).getId();
+    }
+}

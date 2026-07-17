@@ -11,11 +11,11 @@
         <relativePath/>
     </parent>
 
-    <groupId>dev.isidro</groupId>
-    <artifactId>spring-boot-http-query-verb-example</artifactId>
+    <groupId>io.irn</groupId>
+    <artifactId>minidoodle</artifactId>
     <version>0.1.0</version>
-    <name>spring-boot-http-query-verb-example</name>
-    <description>HTTP QUERY verb playground — mini Doodle scheduling platform</description>
+    <name>minidoodle</name>
+    <description>Mini Doodle scheduling platform — also an HTTP QUERY verb playground</description>
 
     <properties>
         <java.version>21</java.version>
