@@ -1,16 +1,16 @@
-package dev.isidro.queryverb.web;
+package io.irn.minidoodle.web;
 
-import dev.isidro.queryverb.TestSupport;
-import dev.isidro.queryverb.domain.SlotStatus;
-import dev.isidro.queryverb.repository.CalendarRepository;
-import dev.isidro.queryverb.repository.MeetingParticipantRepository;
-import dev.isidro.queryverb.repository.MeetingRepository;
-import dev.isidro.queryverb.repository.SlotRepository;
-import dev.isidro.queryverb.repository.UserRepository;
-import dev.isidro.queryverb.web.dto.SlotBulkCreateRequest;
-import dev.isidro.queryverb.web.dto.SlotQueryFilter;
-import dev.isidro.queryverb.web.dto.SlotResponse;
-import dev.isidro.queryverb.web.dto.SlotUpdateRequest;
+import io.irn.minidoodle.TestSupport;
+import io.irn.minidoodle.domain.SlotStatus;
+import io.irn.minidoodle.repository.CalendarRepository;
+import io.irn.minidoodle.repository.MeetingParticipantRepository;
+import io.irn.minidoodle.repository.MeetingRepository;
+import io.irn.minidoodle.repository.SlotRepository;
+import io.irn.minidoodle.repository.UserRepository;
+import io.irn.minidoodle.web.dto.SlotBulkCreateRequest;
+import io.irn.minidoodle.web.dto.SlotQueryFilter;
+import io.irn.minidoodle.web.dto.SlotResponse;
+import io.irn.minidoodle.web.dto.SlotUpdateRequest;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -145,6 +145,22 @@ class SlotRouteIT {
         assertThat(res.getStatusCode()).isEqualTo(HttpStatus.NOT_FOUND);
     }
 
+    @Test
+    void getSlot_returns400_whenUserIdNotNumeric() {
+        ResponseEntity<String> res = restTemplate.getForEntity(
+                "/api/users/{uid}/slots/{sid}", String.class, "not-a-number", slotId);
+
+        assertThat(res.getStatusCode()).isEqualTo(HttpStatus.BAD_REQUEST);
+    }
+
+    @Test
+    void getSlot_returns400_whenSlotIdNotNumeric() {
+        ResponseEntity<String> res = restTemplate.getForEntity(
+                "/api/users/{uid}/slots/{sid}", String.class, userId, "not-a-number");
+
+        assertThat(res.getStatusCode()).isEqualTo(HttpStatus.BAD_REQUEST);
+    }
+
     // ── POST (bulk create) ────────────────────────────────────────────────────
 
     @Test
@@ -193,6 +209,14 @@ class SlotRouteIT {
     void createSlots_returns400_whenStartTimesEmpty() {
         ResponseEntity<String> res = restTemplate.postForEntity(
                 "/api/users/{uid}/slots", new SlotBulkCreateRequest(List.of()), String.class, userId);
+
+        assertThat(res.getStatusCode()).isEqualTo(HttpStatus.BAD_REQUEST);
+    }
+
+    @Test
+    void createSlots_returns400_whenUserIdNotNumeric() {
+        ResponseEntity<String> res = restTemplate.postForEntity(
+                "/api/users/{uid}/slots", new SlotBulkCreateRequest(List.of(T2)), String.class, "not-a-number");
 
         assertThat(res.getStatusCode()).isEqualTo(HttpStatus.BAD_REQUEST);
     }
@@ -267,6 +291,28 @@ class SlotRouteIT {
     void patchSlot_returns400_whenRescheduleNotGridAligned() {
         HttpHeaders headers = jsonHeaders();
         var req = new HttpEntity<>(new SlotUpdateRequest(T2.plusSeconds(60), null), headers);
+
+        ResponseEntity<String> res = restTemplate.exchange(
+                "/api/users/{uid}/slots/{sid}", HttpMethod.PATCH, req, String.class, userId, slotId);
+
+        assertThat(res.getStatusCode()).isEqualTo(HttpStatus.BAD_REQUEST);
+    }
+
+    @Test
+    void patchSlot_returns400_whenStatusIsNotAValidEnumValue() {
+        HttpHeaders headers = jsonHeaders();
+        var req = new HttpEntity<>("{\"status\":\"NOT_A_STATUS\"}", headers);
+
+        ResponseEntity<String> res = restTemplate.exchange(
+                "/api/users/{uid}/slots/{sid}", HttpMethod.PATCH, req, String.class, userId, slotId);
+
+        assertThat(res.getStatusCode()).isEqualTo(HttpStatus.BAD_REQUEST);
+    }
+
+    @Test
+    void patchSlot_returns400_whenBodyIsMalformedJson() {
+        HttpHeaders headers = jsonHeaders();
+        var req = new HttpEntity<>("{not valid json", headers);
 
         ResponseEntity<String> res = restTemplate.exchange(
                 "/api/users/{uid}/slots/{sid}", HttpMethod.PATCH, req, String.class, userId, slotId);

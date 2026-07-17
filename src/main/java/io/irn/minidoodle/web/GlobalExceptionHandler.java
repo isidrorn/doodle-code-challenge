@@ -1,4 +1,4 @@
-package dev.isidro.queryverb.web;
+package io.irn.minidoodle.web;
 
 import jakarta.servlet.http.HttpServletRequest;
 import java.net.URI;
@@ -6,6 +6,7 @@ import lombok.extern.slf4j.Slf4j;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ProblemDetail;
 import org.springframework.http.ResponseEntity;
+import org.springframework.http.converter.HttpMessageNotReadableException;
 import org.springframework.orm.ObjectOptimisticLockingFailureException;
 import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.RestControllerAdvice;
@@ -25,6 +26,18 @@ public class GlobalExceptionHandler {
         ProblemDetail pd = ProblemDetail.forStatusAndDetail(ex.getStatusCode(), ex.getReason());
         pd.setInstance(URI.create(req.getRequestURI()));
         return ResponseEntity.status(ex.getStatusCode()).body(pd);
+    }
+
+    @ExceptionHandler(HttpMessageNotReadableException.class)
+    public ResponseEntity<ProblemDetail> handleMalformedBody(HttpMessageNotReadableException ex, HttpServletRequest req) {
+        Throwable cause = ex;
+        while (cause.getCause() != null) {
+            cause = cause.getCause();
+        }
+        ProblemDetail pd = ProblemDetail.forStatusAndDetail(HttpStatus.BAD_REQUEST,
+                "Malformed request body: " + cause.getMessage());
+        pd.setInstance(URI.create(req.getRequestURI()));
+        return ResponseEntity.badRequest().body(pd);
     }
 
     @ExceptionHandler(ObjectOptimisticLockingFailureException.class)

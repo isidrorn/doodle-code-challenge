@@ -1,8 +1,8 @@
-package dev.isidro.queryverb.web;
+package io.irn.minidoodle.web;
 
-import dev.isidro.queryverb.service.UserService;
-import dev.isidro.queryverb.web.dto.UserCreateRequest;
-import dev.isidro.queryverb.web.mapper.UserMapper;
+import io.irn.minidoodle.service.UserService;
+import io.irn.minidoodle.web.dto.UserCreateRequest;
+import io.irn.minidoodle.web.mapper.UserMapper;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.MediaType;
 import org.springframework.stereotype.Component;
@@ -23,7 +23,7 @@ public class UserHandler {
     }
 
     public ServerResponse getOne(ServerRequest request) throws Exception {
-        Long userId = Long.valueOf(request.pathVariable("userId"));
+        Long userId = requestValidator.parseId(request, "userId");
         return ok(userMapper.toResponse(userService.findById(userId)));
     }
 

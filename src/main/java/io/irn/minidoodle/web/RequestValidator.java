@@ -1,4 +1,4 @@
-package dev.isidro.queryverb.web;
+package io.irn.minidoodle.web;
 
 import jakarta.validation.ConstraintViolation;
 import jakarta.validation.Validator;
@@ -11,13 +11,25 @@ import org.springframework.web.server.ResponseStatusException;
 import org.springframework.web.servlet.function.ServerRequest;
 
 /**
- * Parses and bean-validates a request body for functional routes.
+ * Parses and validates untrusted request input for functional routes: bodies against bean
+ * validation constraints, and path variables against their expected type.
  *
  * <p>WebMvc.fn HandlerFunctions have no equivalent of {@code @Valid} on a
  * {@code @RequestBody} parameter — {@code ServerRequest.body(Class)} never invokes a
  * Validator, so the {@code @NotBlank}/{@code @NotNull}/etc. annotations on the DTOs
  * are otherwise never checked. This is the manual replacement, used wherever a
  * handler parses a validated request DTO.
+ *
+ * <p>Path variables have an analogous gap: {@code @RequestMapping}-based Spring MVC controllers get
+ * automatic 400s for a path variable that doesn't match its declared type (via {@code
+ * MethodArgumentTypeMismatchException}), but a functional route's handler parses {@code
+ * request.pathVariable(name)} — always a {@code String} — by hand. A handler that calls {@code
+ * Long.valueOf(...)} directly lets a malformed id (e.g. Swagger UI's default `string` placeholder
+ * for an untyped path parameter) throw an uncaught {@code NumberFormatException}, which the generic
+ * exception handling in {@link RouterExceptionFilter}/{@link GlobalExceptionHandler} maps to a bare
+ * 500 — not what a client did wrong. {@link #parseId} is the equivalent manual replacement: every
+ * handler must go through it instead of calling {@code Long.valueOf(request.pathVariable(...))}
+ * directly.
  */
 @Component
 @RequiredArgsConstructor
@@ -37,5 +49,21 @@ public class RequestValidator {
         }
 
         return body;
+    }
+
+    /**
+     * Parses a path variable as a {@code Long} id, throwing a 400 (not letting a
+     * {@code NumberFormatException} propagate to the generic 500 handler) if it isn't one.
+     * Deliberately does not reject non-positive values — an id that's syntactically a valid number
+     * but doesn't correspond to any row is a 404 concern for the service layer, not a 400 here.
+     */
+    public Long parseId(ServerRequest request, String pathVariableName) {
+        String raw = request.pathVariable(pathVariableName);
+        try {
+            return Long.parseLong(raw);
+        } catch (NumberFormatException e) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST,
+                    "%s must be a valid number, got '%s'".formatted(pathVariableName, raw));
+        }
     }
 }

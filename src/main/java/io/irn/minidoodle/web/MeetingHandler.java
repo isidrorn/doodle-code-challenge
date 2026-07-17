@@ -1,10 +1,10 @@
-package dev.isidro.queryverb.web;
+package io.irn.minidoodle.web;
 
-import dev.isidro.queryverb.service.MeetingService;
-import dev.isidro.queryverb.web.dto.MeetingCancelRequest;
-import dev.isidro.queryverb.web.dto.MeetingCreateRequest;
-import dev.isidro.queryverb.web.dto.VoteRequest;
-import dev.isidro.queryverb.web.mapper.MeetingMapper;
+import io.irn.minidoodle.service.MeetingService;
+import io.irn.minidoodle.web.dto.MeetingCancelRequest;
+import io.irn.minidoodle.web.dto.MeetingCreateRequest;
+import io.irn.minidoodle.web.dto.VoteRequest;
+import io.irn.minidoodle.web.mapper.MeetingMapper;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.MediaType;
 import org.springframework.stereotype.Component;
@@ -32,7 +32,7 @@ public class MeetingHandler {
 
     public ServerResponse vote(ServerRequest request) throws Exception {
         Long meetingId = meetingId(request);
-        Long userId = Long.valueOf(request.pathVariable("userId"));
+        Long userId = requestValidator.parseId(request, "userId");
         var body = requestValidator.parseAndValidate(request, VoteRequest.class);
         var meeting = meetingService.vote(meetingId, userId, body.vote());
         return ok(meetingMapper.toResponse(meeting));
@@ -46,7 +46,7 @@ public class MeetingHandler {
     }
 
     private Long meetingId(ServerRequest req) {
-        return Long.valueOf(req.pathVariable("meetingId"));
+        return requestValidator.parseId(req, "meetingId");
     }
 
     private ServerResponse ok(Object body) throws Exception {

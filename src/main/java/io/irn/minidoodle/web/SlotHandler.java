@@ -1,10 +1,10 @@
-package dev.isidro.queryverb.web;
+package io.irn.minidoodle.web;
 
-import dev.isidro.queryverb.service.SlotService;
-import dev.isidro.queryverb.web.dto.SlotBulkCreateRequest;
-import dev.isidro.queryverb.web.dto.SlotQueryFilter;
-import dev.isidro.queryverb.web.dto.SlotUpdateRequest;
-import dev.isidro.queryverb.web.mapper.SlotMapper;
+import io.irn.minidoodle.service.SlotService;
+import io.irn.minidoodle.web.dto.SlotBulkCreateRequest;
+import io.irn.minidoodle.web.dto.SlotQueryFilter;
+import io.irn.minidoodle.web.dto.SlotUpdateRequest;
+import io.irn.minidoodle.web.mapper.SlotMapper;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.MediaType;
 import org.springframework.stereotype.Component;
@@ -65,11 +65,11 @@ public class SlotHandler {
     }
 
     private Long userId(ServerRequest req) {
-        return Long.valueOf(req.pathVariable("userId"));
+        return requestValidator.parseId(req, "userId");
     }
 
     private Long slotId(ServerRequest req) {
-        return Long.valueOf(req.pathVariable("slotId"));
+        return requestValidator.parseId(req, "slotId");
     }
 
     /**

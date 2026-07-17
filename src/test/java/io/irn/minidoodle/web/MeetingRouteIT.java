@@ -1,23 +1,23 @@
-package dev.isidro.queryverb.web;
+package io.irn.minidoodle.web;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
-import dev.isidro.queryverb.TestSupport;
-import dev.isidro.queryverb.domain.MeetingStatus;
-import dev.isidro.queryverb.domain.ParticipantRole;
-import dev.isidro.queryverb.domain.SlotStatus;
-import dev.isidro.queryverb.domain.Vote;
-import dev.isidro.queryverb.repository.CalendarRepository;
-import dev.isidro.queryverb.repository.MeetingParticipantRepository;
-import dev.isidro.queryverb.repository.MeetingRepository;
-import dev.isidro.queryverb.repository.SlotRepository;
-import dev.isidro.queryverb.repository.UserRepository;
-import dev.isidro.queryverb.web.dto.MeetingCancelRequest;
-import dev.isidro.queryverb.web.dto.MeetingCreateRequest;
-import dev.isidro.queryverb.web.dto.MeetingResponse;
-import dev.isidro.queryverb.web.dto.ParticipantResponse;
-import dev.isidro.queryverb.web.dto.SlotResponse;
-import dev.isidro.queryverb.web.dto.VoteRequest;
+import io.irn.minidoodle.TestSupport;
+import io.irn.minidoodle.domain.MeetingStatus;
+import io.irn.minidoodle.domain.ParticipantRole;
+import io.irn.minidoodle.domain.SlotStatus;
+import io.irn.minidoodle.domain.Vote;
+import io.irn.minidoodle.repository.CalendarRepository;
+import io.irn.minidoodle.repository.MeetingParticipantRepository;
+import io.irn.minidoodle.repository.MeetingRepository;
+import io.irn.minidoodle.repository.SlotRepository;
+import io.irn.minidoodle.repository.UserRepository;
+import io.irn.minidoodle.web.dto.MeetingCancelRequest;
+import io.irn.minidoodle.web.dto.MeetingCreateRequest;
+import io.irn.minidoodle.web.dto.MeetingResponse;
+import io.irn.minidoodle.web.dto.ParticipantResponse;
+import io.irn.minidoodle.web.dto.SlotResponse;
+import io.irn.minidoodle.web.dto.VoteRequest;
 import java.time.Instant;
 import java.util.List;
 import org.junit.jupiter.api.BeforeEach;
@@ -128,6 +128,12 @@ class MeetingRouteIT {
                 .isEqualTo(HttpStatus.NOT_FOUND);
     }
 
+    @Test
+    void getMeeting_returns400_whenIdNotNumeric() {
+        assertThat(restTemplate.getForEntity("/api/meetings/{id}", String.class, "not-a-number").getStatusCode())
+                .isEqualTo(HttpStatus.BAD_REQUEST);
+    }
+
     // ── vote ──────────────────────────────────────────────────────────────────
 
     @Test
@@ -199,6 +205,39 @@ class MeetingRouteIT {
                 "/api/meetings/9999/participants/{uid}/vote", new VoteRequest(Vote.YES), String.class, bobId);
 
         assertThat(res.getStatusCode()).isEqualTo(HttpStatus.NOT_FOUND);
+    }
+
+    @Test
+    void vote_returns400_whenMeetingIdNotNumeric() {
+        ResponseEntity<String> res = restTemplate.postForEntity(
+                "/api/meetings/{mid}/participants/{uid}/vote", new VoteRequest(Vote.YES),
+                String.class, "not-a-number", bobId);
+
+        assertThat(res.getStatusCode()).isEqualTo(HttpStatus.BAD_REQUEST);
+    }
+
+    @Test
+    void vote_returns400_whenUserIdNotNumeric() {
+        Long meetingId = createMeeting(List.of(bobId), List.of()).getBody().id();
+
+        ResponseEntity<String> res = restTemplate.postForEntity(
+                "/api/meetings/{mid}/participants/{uid}/vote", new VoteRequest(Vote.YES),
+                String.class, meetingId, "not-a-number");
+
+        assertThat(res.getStatusCode()).isEqualTo(HttpStatus.BAD_REQUEST);
+    }
+
+    @Test
+    void vote_returns400_whenVoteIsNotAValidEnumValue() {
+        Long meetingId = createMeeting(List.of(bobId), List.of()).getBody().id();
+        HttpHeaders headers = new HttpHeaders();
+        headers.setContentType(MediaType.APPLICATION_JSON);
+        var req = new HttpEntity<>("{\"vote\":\"MAYBE\"}", headers);
+
+        ResponseEntity<String> res = restTemplate.postForEntity(
+                "/api/meetings/{mid}/participants/{uid}/vote", req, String.class, meetingId, bobId);
+
+        assertThat(res.getStatusCode()).isEqualTo(HttpStatus.BAD_REQUEST);
     }
 
     // ── cancel ────────────────────────────────────────────────────────────────
