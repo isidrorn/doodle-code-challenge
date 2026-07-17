@@ -5,6 +5,7 @@ import dev.isidro.queryverb.domain.SlotStatus;
 import java.time.Instant;
 import java.util.List;
 import java.util.Optional;
+import org.springframework.data.jpa.repository.EntityGraph;
 import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.data.jpa.repository.Lock;
 import org.springframework.data.jpa.repository.Query;
@@ -19,7 +20,12 @@ public interface SlotRepository extends JpaRepository<Slot, Long> {
      * and a bare "? is null" (no comparison, no cast) gives it nothing to infer from —
      * "could not determine data type of parameter $n". H2 (used in tests) doesn't
      * enforce this, which is why this only surfaces against a real Postgres.
+     *
+     * <p>@EntityGraph("meetings") is required here: SlotMapper reads slot.getMeetings() to build
+     * SlotResponse.meetingIds after the service's @Transactional method returns (open-in-view is
+     * off), and @ManyToMany collections default to LAZY.
      */
+    @EntityGraph(attributePaths = "meetings")
     @Query("""
             select s from Slot s
             where s.calendar.owner.id = :userId
@@ -61,9 +67,29 @@ public interface SlotRepository extends JpaRepository<Slot, Long> {
     @Query("select s from Slot s where s.id = :id")
     Optional<Slot> findByIdForUpdate(@Param("id") Long id);
 
+    /** @EntityGraph("meetings") — see the note on search() above; getOne() maps this directly. */
+    @EntityGraph(attributePaths = "meetings")
     @Query("select s from Slot s where s.calendar.owner.id = :userId and s.id = :slotId")
     Optional<Slot> findByUserIdAndSlotId(
             @Param("userId") Long userId,
             @Param("slotId") Long slotId
+    );
+
+    /**
+     * FREE slots for a user within a range — used by MeetingService.confirm to check whether a
+     * participant has full, contiguous slot coverage for a meeting's [startTime, endTime).
+     */
+    @Query("""
+            select s from Slot s
+            where s.calendar.owner.id = :userId
+              and s.status = 'FREE'
+              and s.startTime >= :startTime
+              and s.endTime   <= :endTime
+            order by s.startTime asc
+            """)
+    List<Slot> findFreeSlotsCovering(
+            @Param("userId") Long userId,
+            @Param("startTime") Instant startTime,
+            @Param("endTime") Instant endTime
     );
 }
