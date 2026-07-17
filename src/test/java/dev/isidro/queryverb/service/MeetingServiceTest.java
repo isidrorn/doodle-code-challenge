@@ -57,7 +57,7 @@ class MeetingServiceTest {
     @BeforeEach
     void setUp() {
         meetingService = new MeetingService(slotRepository, meetingRepository,
-                meetingParticipantRepository, userRepository, new SlotDurationConfig());
+                meetingParticipantRepository, userRepository, new SlotDurationConfig(30));
 
         organizer = userWithId(ORGANIZER_ID, "Alice");
         required  = userWithId(REQUIRED_ID, "Bob");

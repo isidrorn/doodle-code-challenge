@@ -46,7 +46,7 @@ class SlotServiceTest {
 
     @BeforeEach
     void setUp() {
-        slotService = new SlotService(slotRepository, calendarRepository, new SlotDurationConfig());
+        slotService = new SlotService(slotRepository, calendarRepository, new SlotDurationConfig(30));
     }
 
     // ── create ────────────────────────────────────────────────────────────────

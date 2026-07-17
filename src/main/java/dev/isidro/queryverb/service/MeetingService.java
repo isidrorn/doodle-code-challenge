@@ -48,7 +48,7 @@ public class MeetingService {
             throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "startTime must be before endTime");
         }
 
-        long durationMinutes = slotDurationConfig.getSlotDurationMinutes();
+        long durationMinutes = slotDurationConfig.slotDurationMinutes();
         if (start.getEpochSecond() % (durationMinutes * 60) != 0) {
             throw new ResponseStatusException(HttpStatus.BAD_REQUEST,
                     "startTime %s is not aligned to the %d-minute slot grid".formatted(start, durationMinutes));

@@ -61,7 +61,20 @@ calendar sits exactly on the grid — a client could otherwise `PATCH` a slot's 
 `09:07` and permanently break contiguous-coverage matching for any meeting touching that window.
 Validating the grid in exactly one of the two mutation paths would leave a hole, so both enforce it.
 
+**`SlotDurationConfig` is a constructor-bound record, not a `@Component`-annotated mutable POJO
+(the first draft's shape, changed on review).** It's a plain
+`@ConfigurationProperties(prefix = "scheduling") record SlotDurationConfig(int slotDurationMinutes)`
+with no stereotype annotation on the class itself — registration happens once, explicitly, via
+`@ConfigurationPropertiesScan` on `Application.java`, rather than the properties class doubling as
+a generic `@Component`. This matches the record style already used for every DTO in this codebase
+and keeps the properties class an immutable, framework-registration-free data holder. The compact
+constructor's `slotDurationMinutes <= 0 → 30` fallback exists because constructor-bound properties
+bind an *absent* property to the primitive default (`0`), not to any "natural" default — and
+`application-test.yml` deliberately doesn't set `scheduling.slot-duration-minutes`, so this path is
+exercised for real by every `@SpringBootTest` IT class, not just defensive dead code.
+
 ## `SlotBulkCreateRequest` conflict-detection reuses `existsOverlap`, not a new exact-match query
+
 
 The brief describes the per-item conflict check as "no existing slot at that exact `startTime`."
 Implemented via the existing `SlotRepository.existsOverlap(userId, start, end, excludeId)` instead of

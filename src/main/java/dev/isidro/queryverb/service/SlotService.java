@@ -40,7 +40,7 @@ public class SlotService {
      * in the design log.
      */
     public List<Slot> create(Long userId, SlotBulkCreateRequest request) {
-        long durationSeconds = slotDurationConfig.getSlotDurationMinutes() * 60L;
+        long durationSeconds = slotDurationConfig.slotDurationMinutes() * 60L;
 
         Set<Instant> requestedStarts = new HashSet<>();
         for (Instant start : request.startTimes()) {
@@ -50,7 +50,7 @@ public class SlotService {
             if (start.getEpochSecond() % durationSeconds != 0) {
                 throw new ResponseStatusException(HttpStatus.BAD_REQUEST,
                         "startTime %s is not aligned to the %d-minute slot grid"
-                                .formatted(start, slotDurationConfig.getSlotDurationMinutes()));
+                                .formatted(start, slotDurationConfig.slotDurationMinutes()));
             }
             if (!requestedStarts.add(start)) {
                 throw new ResponseStatusException(HttpStatus.CONFLICT, "Duplicate startTime in request: " + start);
@@ -80,14 +80,14 @@ public class SlotService {
             throw new ResponseStatusException(HttpStatus.CONFLICT, "Cannot modify a slot booked in a confirmed meeting");
         }
 
-        long durationSeconds = slotDurationConfig.getSlotDurationMinutes() * 60L;
+        long durationSeconds = slotDurationConfig.slotDurationMinutes() * 60L;
         Instant newStart = request.startTime() != null ? request.startTime() : slot.getStartTime();
         Instant newEnd = request.startTime() != null ? newStart.plusSeconds(durationSeconds) : slot.getEndTime();
 
         if (request.startTime() != null && newStart.getEpochSecond() % durationSeconds != 0) {
             throw new ResponseStatusException(HttpStatus.BAD_REQUEST,
                     "startTime %s is not aligned to the %d-minute slot grid"
-                            .formatted(newStart, slotDurationConfig.getSlotDurationMinutes()));
+                            .formatted(newStart, slotDurationConfig.slotDurationMinutes()));
         }
 
         // Serializes the overlap-check-then-write sequence per user — see

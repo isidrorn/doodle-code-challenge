@@ -39,7 +39,7 @@ public class DataSeeder implements ApplicationRunner {
         User user = new User(name, email);
         Calendar calendar = new Calendar(user);
 
-        long durationMinutes = slotDurationConfig.getSlotDurationMinutes();
+        long durationMinutes = slotDurationConfig.slotDurationMinutes();
         for (int i = 0; i < SEED_SLOTS_PER_USER; i++) {
             Instant start = gridStart.plus(i * durationMinutes, ChronoUnit.MINUTES);
             calendar.addSlot(new Slot(start, start.plus(durationMinutes, ChronoUnit.MINUTES)));
