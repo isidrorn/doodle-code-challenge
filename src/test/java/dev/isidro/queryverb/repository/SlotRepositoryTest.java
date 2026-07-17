@@ -66,4 +66,20 @@ class SlotRepositoryTest {
         assertThat(slotRepository.existsOverlap(userId, now.plus(10, ChronoUnit.HOURS), now.plus(11, ChronoUnit.HOURS), null))
                 .isFalse();
     }
+
+    @Test
+    void findFreeSlotsCoveringReturnsOnlyFreeSlotsWithinRange() {
+        var result = slotRepository.findFreeSlotsCovering(userId, now, now.plus(3, ChronoUnit.HOURS));
+
+        // The second seeded slot (now+2h..now+3h) was marked BUSY in setUp, so only the first is FREE.
+        assertThat(result).hasSize(1);
+        assertThat(result.getFirst().getStartTime()).isEqualTo(now);
+    }
+
+    @Test
+    void findFreeSlotsCoveringExcludesSlotsOutsideRange() {
+        var result = slotRepository.findFreeSlotsCovering(userId, now.plus(10, ChronoUnit.HOURS), now.plus(11, ChronoUnit.HOURS));
+
+        assertThat(result).isEmpty();
+    }
 }

@@ -4,6 +4,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 
 import dev.isidro.queryverb.TestSupport;
 import dev.isidro.queryverb.repository.CalendarRepository;
+import dev.isidro.queryverb.repository.MeetingParticipantRepository;
 import dev.isidro.queryverb.repository.MeetingRepository;
 import dev.isidro.queryverb.repository.SlotRepository;
 import dev.isidro.queryverb.repository.UserRepository;
@@ -28,12 +29,13 @@ class UserRouteIT {
     @Autowired TestRestTemplate    restTemplate;
     @Autowired SlotRepository      slotRepository;
     @Autowired MeetingRepository   meetingRepository;
+    @Autowired MeetingParticipantRepository meetingParticipantRepository;
     @Autowired CalendarRepository  calendarRepository;
     @Autowired UserRepository      userRepository;
 
     @BeforeEach
     void cleanUp() {
-        TestSupport.cleanUp(slotRepository, meetingRepository, calendarRepository, userRepository);
+        TestSupport.cleanUp(slotRepository, meetingRepository, meetingParticipantRepository, calendarRepository, userRepository);
     }
 
     @Test

@@ -4,6 +4,7 @@ import dev.isidro.queryverb.domain.Calendar;
 import dev.isidro.queryverb.domain.Slot;
 import dev.isidro.queryverb.domain.User;
 import dev.isidro.queryverb.repository.CalendarRepository;
+import dev.isidro.queryverb.repository.MeetingParticipantRepository;
 import dev.isidro.queryverb.repository.MeetingRepository;
 import dev.isidro.queryverb.repository.SlotRepository;
 import dev.isidro.queryverb.repository.UserRepository;
@@ -15,13 +16,15 @@ public final class TestSupport {
     private TestSupport() {}
 
     /**
-     * Deletes all data in FK-safe order.
-     * slot.meeting_id → meeting, slot.calendar_id → calendar, calendar.owner_id → user.
+     * Deletes all data in FK-safe order: meeting_participant → meeting (which also clears the
+     * slot_meeting join table it owns) → slot → calendar → user.
      */
     public static void cleanUp(SlotRepository slots, MeetingRepository meetings,
+                                MeetingParticipantRepository meetingParticipants,
                                 CalendarRepository calendars, UserRepository users) {
-        slots.deleteAll();
+        meetingParticipants.deleteAll();
         meetings.deleteAll();
+        slots.deleteAll();
         calendars.deleteAll();
         users.deleteAll();
     }

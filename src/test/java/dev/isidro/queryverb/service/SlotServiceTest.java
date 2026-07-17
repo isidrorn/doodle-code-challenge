@@ -7,6 +7,7 @@ import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
+import dev.isidro.queryverb.config.SlotDurationConfig;
 import dev.isidro.queryverb.domain.Calendar;
 import dev.isidro.queryverb.domain.Meeting;
 import dev.isidro.queryverb.domain.Slot;
@@ -14,13 +15,15 @@ import dev.isidro.queryverb.domain.SlotStatus;
 import dev.isidro.queryverb.domain.User;
 import dev.isidro.queryverb.repository.CalendarRepository;
 import dev.isidro.queryverb.repository.SlotRepository;
-import dev.isidro.queryverb.web.dto.SlotCreateRequest;
+import dev.isidro.queryverb.web.dto.SlotBulkCreateRequest;
 import dev.isidro.queryverb.web.dto.SlotUpdateRequest;
 import java.time.Instant;
+import java.util.Arrays;
+import java.util.List;
 import java.util.Optional;
+import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
-import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.http.HttpStatus;
@@ -31,116 +34,138 @@ class SlotServiceTest {
 
     @Mock SlotRepository slotRepository;
     @Mock CalendarRepository calendarRepository;
-    @InjectMocks SlotService slotService;
 
-    static final Long USER_ID  = 1L;
-    static final Long SLOT_ID  = 10L;
+    SlotService slotService;
+
+    static final Long USER_ID = 1L;
+    static final Long SLOT_ID = 10L;
+    // 30-minute grid (default SlotDurationConfig)
     static final Instant T0 = Instant.parse("2026-06-01T09:00:00Z");
-    static final Instant T1 = Instant.parse("2026-06-01T10:00:00Z");
-    static final Instant T2 = Instant.parse("2026-06-01T11:00:00Z");
+    static final Instant T1 = Instant.parse("2026-06-01T09:30:00Z");
+    static final Instant T2 = Instant.parse("2026-06-01T10:00:00Z");
+
+    @BeforeEach
+    void setUp() {
+        slotService = new SlotService(slotRepository, calendarRepository, new SlotDurationConfig());
+    }
 
     // ── create ────────────────────────────────────────────────────────────────
 
     @Test
-    void create_throwsBadRequest_whenStartAfterEnd() {
-        assertThatThrownBy(() -> slotService.create(USER_ID, new SlotCreateRequest(T1, T0)))
-                .isInstanceOf(ResponseStatusException.class)
-                .extracting(e -> ((ResponseStatusException) e).getStatusCode())
-                .isEqualTo(HttpStatus.BAD_REQUEST);
+    void create_throwsBadRequest_whenStartTimeNotGridAligned() {
+        assertStatus(HttpStatus.BAD_REQUEST,
+                () -> slotService.create(USER_ID, new SlotBulkCreateRequest(List.of(T0.plusSeconds(1)))));
+    }
+
+    @Test
+    void create_throwsBadRequest_whenStartTimeIsNull() {
+        assertStatus(HttpStatus.BAD_REQUEST,
+                () -> slotService.create(USER_ID, new SlotBulkCreateRequest(Arrays.asList(T0, null))));
+    }
+
+    @Test
+    void create_throwsConflict_whenDuplicateStartTimeWithinRequest() {
+        assertStatus(HttpStatus.CONFLICT,
+                () -> slotService.create(USER_ID, new SlotBulkCreateRequest(List.of(T0, T0))));
     }
 
     @Test
     void create_throwsConflict_whenOverlapExists() {
-        User user = new User("Test", "test@test.com");
-        Calendar calendar = new Calendar(user);
+        Calendar calendar = new Calendar(new User("Test", "test@test.com"));
         when(calendarRepository.findByOwnerIdForUpdate(USER_ID)).thenReturn(Optional.of(calendar));
         when(slotRepository.existsOverlap(USER_ID, T0, T1, null)).thenReturn(true);
-        assertThatThrownBy(() -> slotService.create(USER_ID, new SlotCreateRequest(T0, T1)))
-                .isInstanceOf(ResponseStatusException.class)
-                .extracting(e -> ((ResponseStatusException) e).getStatusCode())
-                .isEqualTo(HttpStatus.CONFLICT);
+
+        assertStatus(HttpStatus.CONFLICT,
+                () -> slotService.create(USER_ID, new SlotBulkCreateRequest(List.of(T0))));
     }
 
     @Test
-    void create_savesSlot_whenValid() {
-        User user = new User("Test", "test@test.com");
-        Calendar calendar = new Calendar(user);
+    void create_savesAllSlots_whenValid() {
+        Calendar calendar = new Calendar(new User("Test", "test@test.com"));
         when(calendarRepository.findByOwnerIdForUpdate(USER_ID)).thenReturn(Optional.of(calendar));
-        when(slotRepository.existsOverlap(USER_ID, T0, T1, null)).thenReturn(false);
-        when(slotRepository.save(any())).thenAnswer(inv -> inv.getArgument(0));
+        when(slotRepository.existsOverlap(eq(USER_ID), any(), any(), eq(null))).thenReturn(false);
+        when(slotRepository.saveAll(any())).thenAnswer(inv -> inv.getArgument(0));
 
-        Slot result = slotService.create(USER_ID, new SlotCreateRequest(T0, T1));
+        List<Slot> result = slotService.create(USER_ID, new SlotBulkCreateRequest(List.of(T0, T1)));
 
-        assertThat(result.getStartTime()).isEqualTo(T0);
-        assertThat(result.getStatus()).isEqualTo(SlotStatus.FREE);
-        verify(slotRepository).save(any(Slot.class));
+        assertThat(result).hasSize(2);
+        assertThat(result.get(0).getStartTime()).isEqualTo(T0);
+        assertThat(result.get(0).getEndTime()).isEqualTo(T1);
+        assertThat(result.get(1).getStartTime()).isEqualTo(T1);
+        assertThat(result.get(1).getEndTime()).isEqualTo(T2);
+        assertThat(result).allMatch(Slot::isFree);
     }
 
     // ── update ────────────────────────────────────────────────────────────────
 
     @Test
-    void update_throwsConflict_whenSlotHasMeeting() {
-        Slot slot = slotWithMeeting();
+    void update_throwsConflict_whenSlotHasConfirmedMeeting() {
+        Slot slot = slotWithConfirmedMeeting();
         when(slotRepository.findByUserIdAndSlotId(USER_ID, SLOT_ID)).thenReturn(Optional.of(slot));
 
-        assertThatThrownBy(() -> slotService.update(USER_ID, SLOT_ID, new SlotUpdateRequest(null, null, null)))
-                .isInstanceOf(ResponseStatusException.class)
-                .extracting(e -> ((ResponseStatusException) e).getStatusCode())
-                .isEqualTo(HttpStatus.CONFLICT);
+        assertStatus(HttpStatus.CONFLICT,
+                () -> slotService.update(USER_ID, SLOT_ID, new SlotUpdateRequest(null, null)));
     }
 
     @Test
-    void update_throwsBadRequest_whenStartAfterEnd() {
-        Slot slot = new Slot(T0, T1);
-        when(slotRepository.findByUserIdAndSlotId(USER_ID, SLOT_ID)).thenReturn(Optional.of(slot));
-
-        assertThatThrownBy(() -> slotService.update(USER_ID, SLOT_ID, new SlotUpdateRequest(T2, T0, null)))
-                .isInstanceOf(ResponseStatusException.class)
-                .extracting(e -> ((ResponseStatusException) e).getStatusCode())
-                .isEqualTo(HttpStatus.BAD_REQUEST);
-    }
-
-    @Test
-    void update_throwsConflict_whenOverlapExists() {
-        Slot slot = new Slot(T0, T1);
-        User user = new User("Test", "test@test.com");
-        Calendar calendar = new Calendar(user);
-        when(slotRepository.findByUserIdAndSlotId(USER_ID, SLOT_ID)).thenReturn(Optional.of(slot));
-        when(calendarRepository.findByOwnerIdForUpdate(USER_ID)).thenReturn(Optional.of(calendar));
-        when(slotRepository.existsOverlap(eq(USER_ID), any(), any(), eq(SLOT_ID))).thenReturn(true);
-
-        assertThatThrownBy(() -> slotService.update(USER_ID, SLOT_ID, new SlotUpdateRequest(T2, T2.plusSeconds(3600), null)))
-                .isInstanceOf(ResponseStatusException.class)
-                .extracting(e -> ((ResponseStatusException) e).getStatusCode())
-                .isEqualTo(HttpStatus.CONFLICT);
-    }
-
-    @Test
-    void update_marksSlotBusy_whenRequested() {
-        Slot slot = new Slot(T0, T1);
-        User user = new User("Test", "test@test.com");
-        Calendar calendar = new Calendar(user);
+    void update_allowsModification_whenSlotOnlyInProposedMeeting() {
+        Slot slot = slotInProposedMeeting();
+        Calendar calendar = new Calendar(new User("Test", "test@test.com"));
         when(slotRepository.findByUserIdAndSlotId(USER_ID, SLOT_ID)).thenReturn(Optional.of(slot));
         when(calendarRepository.findByOwnerIdForUpdate(USER_ID)).thenReturn(Optional.of(calendar));
         when(slotRepository.existsOverlap(eq(USER_ID), any(), any(), eq(SLOT_ID))).thenReturn(false);
         when(slotRepository.save(any())).thenAnswer(inv -> inv.getArgument(0));
 
-        Slot result = slotService.update(USER_ID, SLOT_ID, new SlotUpdateRequest(null, null, SlotStatus.BUSY));
+        Slot result = slotService.update(USER_ID, SLOT_ID, new SlotUpdateRequest(null, SlotStatus.BUSY));
 
         assertThat(result.getStatus()).isEqualTo(SlotStatus.BUSY);
+    }
+
+    @Test
+    void update_throwsBadRequest_whenStartTimeNotGridAligned() {
+        Slot slot = new Slot(T0, T1);
+        when(slotRepository.findByUserIdAndSlotId(USER_ID, SLOT_ID)).thenReturn(Optional.of(slot));
+
+        assertStatus(HttpStatus.BAD_REQUEST,
+                () -> slotService.update(USER_ID, SLOT_ID, new SlotUpdateRequest(T0.plusSeconds(1), null)));
+    }
+
+    @Test
+    void update_throwsConflict_whenOverlapExists() {
+        Slot slot = new Slot(T0, T1);
+        Calendar calendar = new Calendar(new User("Test", "test@test.com"));
+        when(slotRepository.findByUserIdAndSlotId(USER_ID, SLOT_ID)).thenReturn(Optional.of(slot));
+        when(calendarRepository.findByOwnerIdForUpdate(USER_ID)).thenReturn(Optional.of(calendar));
+        when(slotRepository.existsOverlap(eq(USER_ID), any(), any(), eq(SLOT_ID))).thenReturn(true);
+
+        assertStatus(HttpStatus.CONFLICT,
+                () -> slotService.update(USER_ID, SLOT_ID, new SlotUpdateRequest(T2, null)));
+    }
+
+    @Test
+    void update_marksSlotBusy_andRecomputesEndTime_whenRescheduled() {
+        Slot slot = new Slot(T0, T1);
+        Calendar calendar = new Calendar(new User("Test", "test@test.com"));
+        when(slotRepository.findByUserIdAndSlotId(USER_ID, SLOT_ID)).thenReturn(Optional.of(slot));
+        when(calendarRepository.findByOwnerIdForUpdate(USER_ID)).thenReturn(Optional.of(calendar));
+        when(slotRepository.existsOverlap(eq(USER_ID), any(), any(), eq(SLOT_ID))).thenReturn(false);
+        when(slotRepository.save(any())).thenAnswer(inv -> inv.getArgument(0));
+
+        Slot result = slotService.update(USER_ID, SLOT_ID, new SlotUpdateRequest(T1, SlotStatus.BUSY));
+
+        assertThat(result.getStatus()).isEqualTo(SlotStatus.BUSY);
+        assertThat(result.getStartTime()).isEqualTo(T1);
+        assertThat(result.getEndTime()).isEqualTo(T2);
     }
 
     // ── delete ────────────────────────────────────────────────────────────────
 
     @Test
-    void delete_throwsConflict_whenSlotHasMeeting() {
-        Slot slot = slotWithMeeting();
+    void delete_throwsConflict_whenSlotHasConfirmedMeeting() {
+        Slot slot = slotWithConfirmedMeeting();
         when(slotRepository.findByUserIdAndSlotId(USER_ID, SLOT_ID)).thenReturn(Optional.of(slot));
 
-        assertThatThrownBy(() -> slotService.delete(USER_ID, SLOT_ID))
-                .isInstanceOf(ResponseStatusException.class)
-                .extracting(e -> ((ResponseStatusException) e).getStatusCode())
-                .isEqualTo(HttpStatus.CONFLICT);
+        assertStatus(HttpStatus.CONFLICT, () -> slotService.delete(USER_ID, SLOT_ID));
     }
 
     @Test
@@ -155,10 +180,30 @@ class SlotServiceTest {
 
     // ── helpers ───────────────────────────────────────────────────────────────
 
-    private Slot slotWithMeeting() {
+    private Slot slotWithConfirmedMeeting() {
         Slot slot = new Slot(T0, T1);
-        Meeting meeting = Meeting.builder().title("M").description("D").build();
+        Meeting meeting = Meeting.builder().title("M").description("D").startTime(T0).endTime(T1).build();
+        meeting.addSlot(slot);
+        meeting.confirm();
+        return slot;
+    }
+
+    private Slot slotInProposedMeeting() {
+        Slot slot = new Slot(T0, T1);
+        Meeting meeting = Meeting.builder().title("M").description("D").startTime(T0).endTime(T1).build();
         meeting.addSlot(slot);
         return slot;
+    }
+
+    private void assertStatus(HttpStatus expected, ThrowingRunnable action) {
+        assertThatThrownBy(action::run)
+                .isInstanceOf(ResponseStatusException.class)
+                .extracting(e -> ((ResponseStatusException) e).getStatusCode())
+                .isEqualTo(expected);
+    }
+
+    @FunctionalInterface
+    interface ThrowingRunnable {
+        void run();
     }
 }

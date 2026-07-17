@@ -3,10 +3,11 @@ package dev.isidro.queryverb.web;
 import dev.isidro.queryverb.TestSupport;
 import dev.isidro.queryverb.domain.SlotStatus;
 import dev.isidro.queryverb.repository.CalendarRepository;
+import dev.isidro.queryverb.repository.MeetingParticipantRepository;
 import dev.isidro.queryverb.repository.MeetingRepository;
 import dev.isidro.queryverb.repository.SlotRepository;
 import dev.isidro.queryverb.repository.UserRepository;
-import dev.isidro.queryverb.web.dto.SlotCreateRequest;
+import dev.isidro.queryverb.web.dto.SlotBulkCreateRequest;
 import dev.isidro.queryverb.web.dto.SlotQueryFilter;
 import dev.isidro.queryverb.web.dto.SlotResponse;
 import dev.isidro.queryverb.web.dto.SlotUpdateRequest;
@@ -46,14 +47,16 @@ class SlotRouteIT {
 
     static final HttpMethod QUERY = HttpMethod.valueOf("QUERY");
 
+    // 30-minute grid (default scheduling.slot-duration-minutes)
     static final Instant T0 = Instant.parse("2026-06-01T09:00:00Z");
-    static final Instant T1 = Instant.parse("2026-06-01T10:00:00Z");
-    static final Instant T2 = Instant.parse("2026-06-01T11:00:00Z");
-    static final Instant T3 = Instant.parse("2026-06-01T12:00:00Z");
+    static final Instant T1 = Instant.parse("2026-06-01T09:30:00Z");
+    static final Instant T2 = Instant.parse("2026-06-01T10:00:00Z");
+    static final Instant T3 = Instant.parse("2026-06-01T10:30:00Z");
 
     @Autowired TestRestTemplate    restTemplate;
     @Autowired SlotRepository      slotRepository;
     @Autowired MeetingRepository   meetingRepository;
+    @Autowired MeetingParticipantRepository meetingParticipantRepository;
     @Autowired CalendarRepository  calendarRepository;
     @Autowired UserRepository      userRepository;
 
@@ -62,7 +65,7 @@ class SlotRouteIT {
 
     @BeforeEach
     void seed() {
-        TestSupport.cleanUp(slotRepository, meetingRepository, calendarRepository, userRepository);
+        TestSupport.cleanUp(slotRepository, meetingRepository, meetingParticipantRepository, calendarRepository, userRepository);
         userId = TestSupport.seedUser(userRepository, calendarRepository, "Alice", "alice@test.com");
         slotId = TestSupport.seedSlot(slotRepository, calendarRepository, userId, T0, T1);
     }
@@ -77,7 +80,7 @@ class SlotRouteIT {
         assertThat(res.getStatusCode()).isEqualTo(HttpStatus.OK);
         assertThat(res.getBody()).hasSize(1);
         assertThat(res.getBody()[0].status()).isEqualTo(SlotStatus.FREE);
-        assertThat(res.getBody()[0].userId()).isEqualTo(userId);
+        assertThat(res.getBody()[0].meetingIds()).isEmpty();
     }
 
     // ── QUERY (filter by body) ────────────────────────────────────────────────
@@ -132,7 +135,6 @@ class SlotRouteIT {
 
         assertThat(res.getStatusCode()).isEqualTo(HttpStatus.OK);
         assertThat(res.getBody().id()).isEqualTo(slotId);
-        assertThat(res.getBody().userId()).isEqualTo(userId);
     }
 
     @Test
@@ -143,33 +145,54 @@ class SlotRouteIT {
         assertThat(res.getStatusCode()).isEqualTo(HttpStatus.NOT_FOUND);
     }
 
-    // ── POST (create) ─────────────────────────────────────────────────────────
+    // ── POST (bulk create) ────────────────────────────────────────────────────
 
     @Test
-    void createSlot_returns201_andSlotIsFree() {
-        ResponseEntity<SlotResponse> res = restTemplate.postForEntity(
-                "/api/users/{uid}/slots", new SlotCreateRequest(T2, T3), SlotResponse.class, userId);
+    void createSlots_returns201_andAllSlotsAreFree() {
+        ResponseEntity<SlotResponse[]> res = restTemplate.postForEntity(
+                "/api/users/{uid}/slots", new SlotBulkCreateRequest(List.of(T2, T3)), SlotResponse[].class, userId);
 
         assertThat(res.getStatusCode()).isEqualTo(HttpStatus.CREATED);
-        assertThat(res.getBody().status()).isEqualTo(SlotStatus.FREE);
+        assertThat(res.getBody()).hasSize(2);
+        assertThat(res.getBody()).allMatch(s -> s.status() == SlotStatus.FREE);
+        assertThat(res.getBody()[0].endTime()).isEqualTo(T3);
+        assertThat(res.getBody()[1].endTime()).isEqualTo(T3.plus(30, ChronoUnit.MINUTES));
     }
 
     @Test
-    void createSlot_returns409_whenOverlappingSlotExists() {
-        // T0-T1 already seeded; try to create T0:30-T1:30 (overlapping)
-        Instant overlap = T0.plus(30, ChronoUnit.MINUTES);
+    void createSlots_returns409_whenOverlappingSlotExists() {
+        // T0-T1 already seeded; requesting the exact same startTime is a conflict
         ResponseEntity<String> res = restTemplate.postForEntity(
-                "/api/users/{uid}/slots",
-                new SlotCreateRequest(overlap, T1.plus(30, ChronoUnit.MINUTES)),
-                String.class, userId);
+                "/api/users/{uid}/slots", new SlotBulkCreateRequest(List.of(T0)), String.class, userId);
 
         assertThat(res.getStatusCode()).isEqualTo(HttpStatus.CONFLICT);
     }
 
     @Test
-    void createSlot_returns400_whenStartTimeMissing() {
+    void createSlots_returns409_andCreatesNothing_whenOneOfManyOverlaps() {
+        // T2 is free, T0 conflicts — the whole batch must fail, not just T0
         ResponseEntity<String> res = restTemplate.postForEntity(
-                "/api/users/{uid}/slots", new SlotCreateRequest(null, T2), String.class, userId);
+                "/api/users/{uid}/slots", new SlotBulkCreateRequest(List.of(T2, T0)), String.class, userId);
+
+        assertThat(res.getStatusCode()).isEqualTo(HttpStatus.CONFLICT);
+
+        ResponseEntity<SlotResponse[]> after = restTemplate.getForEntity(
+                "/api/users/{uid}/slots", SlotResponse[].class, userId);
+        assertThat(after.getBody()).hasSize(1); // only the originally-seeded slot
+    }
+
+    @Test
+    void createSlots_returns400_whenStartTimeNotGridAligned() {
+        ResponseEntity<String> res = restTemplate.postForEntity(
+                "/api/users/{uid}/slots", new SlotBulkCreateRequest(List.of(T2.plusSeconds(60))), String.class, userId);
+
+        assertThat(res.getStatusCode()).isEqualTo(HttpStatus.BAD_REQUEST);
+    }
+
+    @Test
+    void createSlots_returns400_whenStartTimesEmpty() {
+        ResponseEntity<String> res = restTemplate.postForEntity(
+                "/api/users/{uid}/slots", new SlotBulkCreateRequest(List.of()), String.class, userId);
 
         assertThat(res.getStatusCode()).isEqualTo(HttpStatus.BAD_REQUEST);
     }
@@ -183,8 +206,8 @@ class SlotRouteIT {
      * one winner.
      */
     @Test
-    void createSlot_concurrentOverlappingRequests_onlyOneSucceeds() throws Exception {
-        var req = new SlotCreateRequest(T2, T3);
+    void createSlots_concurrentOverlappingRequests_onlyOneSucceeds() throws Exception {
+        var req = new SlotBulkCreateRequest(List.of(T2));
         int threadCount = 8;
 
         ExecutorService pool = Executors.newFixedThreadPool(threadCount);
@@ -218,7 +241,7 @@ class SlotRouteIT {
     @Test
     void patchSlot_marksAsBusy() {
         HttpHeaders headers = jsonHeaders();
-        var req = new HttpEntity<>(new SlotUpdateRequest(null, null, SlotStatus.BUSY), headers);
+        var req = new HttpEntity<>(new SlotUpdateRequest(null, SlotStatus.BUSY), headers);
 
         ResponseEntity<SlotResponse> res = restTemplate.exchange(
                 "/api/users/{uid}/slots/{sid}", HttpMethod.PATCH, req, SlotResponse.class, userId, slotId);
@@ -228,11 +251,35 @@ class SlotRouteIT {
     }
 
     @Test
+    void patchSlot_reschedule_recomputesEndTimeFromSystemDuration() {
+        HttpHeaders headers = jsonHeaders();
+        var req = new HttpEntity<>(new SlotUpdateRequest(T2, null), headers);
+
+        ResponseEntity<SlotResponse> res = restTemplate.exchange(
+                "/api/users/{uid}/slots/{sid}", HttpMethod.PATCH, req, SlotResponse.class, userId, slotId);
+
+        assertThat(res.getStatusCode()).isEqualTo(HttpStatus.OK);
+        assertThat(res.getBody().startTime()).isEqualTo(T2);
+        assertThat(res.getBody().endTime()).isEqualTo(T3);
+    }
+
+    @Test
+    void patchSlot_returns400_whenRescheduleNotGridAligned() {
+        HttpHeaders headers = jsonHeaders();
+        var req = new HttpEntity<>(new SlotUpdateRequest(T2.plusSeconds(60), null), headers);
+
+        ResponseEntity<String> res = restTemplate.exchange(
+                "/api/users/{uid}/slots/{sid}", HttpMethod.PATCH, req, String.class, userId, slotId);
+
+        assertThat(res.getStatusCode()).isEqualTo(HttpStatus.BAD_REQUEST);
+    }
+
+    @Test
     void patchSlot_returns409_whenRescheduleOverlapsAnotherSlot() {
         TestSupport.seedSlot(slotRepository, calendarRepository, userId, T2, T3);
 
         HttpHeaders headers = jsonHeaders();
-        var req = new HttpEntity<>(new SlotUpdateRequest(T2, T3, null), headers);
+        var req = new HttpEntity<>(new SlotUpdateRequest(T2, null), headers);
 
         ResponseEntity<String> res = restTemplate.exchange(
                 "/api/users/{uid}/slots/{sid}", HttpMethod.PATCH, req, String.class, userId, slotId);
