@@ -1,11 +1,18 @@
 package dev.isidro.queryverb.domain;
 
+import jakarta.persistence.CascadeType;
 import jakarta.persistence.Entity;
+import jakarta.persistence.EnumType;
+import jakarta.persistence.Enumerated;
 import jakarta.persistence.GeneratedValue;
 import jakarta.persistence.GenerationType;
 import jakarta.persistence.Id;
+import jakarta.persistence.JoinColumn;
+import jakarta.persistence.JoinTable;
+import jakarta.persistence.ManyToMany;
 import jakarta.persistence.OneToMany;
 import jakarta.persistence.Table;
+import java.time.Instant;
 import java.util.ArrayList;
 import java.util.List;
 import lombok.Builder;
@@ -13,12 +20,9 @@ import lombok.Getter;
 import lombok.NoArgsConstructor;
 
 /**
- * A Meeting aggregates N Slots, one per participant's calendar.
- * Relationship: Meeting 1—N Slot (each Slot carries a nullable FK to Meeting).
- *
- * <p>Deriving participants from slots (slot → calendar → user) avoids a redundant
- * @ManyToMany and keeps the model consistent: if a slot is removed, the participant
- * link disappears automatically.
+ * A Meeting is proposed against N participants (via MeetingParticipant), then confirmed once
+ * every REQUIRED participant votes YES. Confirming books whichever participants have full FREE
+ * slot coverage for [startTime, endTime] — see MeetingService.confirm.
  */
 @Entity
 @Table(name = "meeting")
@@ -32,18 +36,63 @@ public class Meeting {
 
     private String title;
     private String description;
+    private Instant startTime;
+    private Instant endTime;
 
-    @OneToMany(mappedBy = "meeting")
+    @Enumerated(EnumType.STRING)
+    private MeetingStatus status;
+
+    @ManyToMany
+    @JoinTable(
+            name = "slot_meeting",
+            joinColumns = @JoinColumn(name = "meeting_id"),
+            inverseJoinColumns = @JoinColumn(name = "slot_id"))
     private final List<Slot> slots = new ArrayList<>();
 
+    @OneToMany(mappedBy = "meeting", cascade = CascadeType.ALL, orphanRemoval = true)
+    private final List<MeetingParticipant> participants = new ArrayList<>();
+
     @Builder
-    public Meeting(String title, String description) {
+    public Meeting(String title, String description, Instant startTime, Instant endTime) {
         this.title = title;
         this.description = description;
+        this.startTime = startTime;
+        this.endTime = endTime;
+        this.status = MeetingStatus.PROPOSED;
+    }
+
+    public void addParticipant(MeetingParticipant participant) {
+        participants.add(participant);
     }
 
     public void addSlot(Slot slot) {
         slots.add(slot);
-        slot.assignMeeting(this);
+        slot.getMeetings().add(this);
+        slot.markBusy();
+    }
+
+    /** Frees and disassociates every booked slot — used when cancelling a CONFIRMED meeting. */
+    public void releaseSlots() {
+        for (Slot slot : slots) {
+            slot.getMeetings().remove(this);
+            slot.markFree();
+        }
+        slots.clear();
+    }
+
+    public void confirm() {
+        this.status = MeetingStatus.CONFIRMED;
+    }
+
+    public void cancel() {
+        this.status = MeetingStatus.CANCELLED;
+    }
+
+    public boolean isProposed() {
+        return MeetingStatus.PROPOSED == status;
+    }
+
+    public boolean isConfirmed() {
+        return MeetingStatus.CONFIRMED == status;
     }
 }

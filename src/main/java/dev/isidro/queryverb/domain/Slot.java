@@ -8,10 +8,13 @@ import jakarta.persistence.GenerationType;
 import jakarta.persistence.Id;
 import jakarta.persistence.Index;
 import jakarta.persistence.JoinColumn;
+import jakarta.persistence.ManyToMany;
 import jakarta.persistence.ManyToOne;
 import jakarta.persistence.Table;
 import jakarta.persistence.Version;
 import java.time.Instant;
+import java.util.ArrayList;
+import java.util.List;
 import lombok.Getter;
 import lombok.NoArgsConstructor;
 
@@ -31,9 +34,13 @@ public class Slot {
     @JoinColumn(name = "calendar_id", nullable = false)
     private Calendar calendar;
 
-    @ManyToOne
-    @JoinColumn(name = "meeting_id")
-    private Meeting meeting;
+    /**
+     * Inverse side of Meeting.slots (@ManyToMany, join table slot_meeting). A slot can belong to
+     * several PROPOSED meetings at once, but at most one CONFIRMED one — that constraint isn't
+     * enforced at the DB level, MeetingService checks it when confirming.
+     */
+    @ManyToMany(mappedBy = "slots")
+    private final List<Meeting> meetings = new ArrayList<>();
 
     private Instant startTime;
     private Instant endTime;
@@ -72,7 +79,6 @@ public class Slot {
 
     public void markFree() {
         this.status = SlotStatus.FREE;
-        this.meeting = null;
     }
 
     public void reschedule(Instant newStart, Instant newEnd) {
@@ -84,12 +90,11 @@ public class Slot {
         return SlotStatus.FREE == this.status;
     }
 
-    void assignCalendar(Calendar calendar) {
-        this.calendar = calendar;
+    public boolean hasConfirmedMeeting() {
+        return meetings.stream().anyMatch(Meeting::isConfirmed);
     }
 
-    void assignMeeting(Meeting meeting) {
-        this.meeting = meeting;
-        this.status = SlotStatus.BUSY;
+    void assignCalendar(Calendar calendar) {
+        this.calendar = calendar;
     }
 }
