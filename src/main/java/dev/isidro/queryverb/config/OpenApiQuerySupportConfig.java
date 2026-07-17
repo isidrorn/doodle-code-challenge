@@ -36,17 +36,14 @@ import org.springframework.context.annotation.Configuration;
  * YAML file, isn't a real property in this version either — not present anywhere in {@code
  * SpringDocConfigProperties} (checked the actual source, not just the properties reference page).
  *
- * <p><b>What this corrected version actually achieves, and what it doesn't:</b> the QUERY operation
- * now appears under {@code paths./api/users/{userId}/slots.x-query} in the live JSON, with real
+ * <p>This customizer builds the operation and attaches it under the spec-compliant {@code x-query}
+ * extension key — the only key name swagger-core will actually serialize (see above) — with real
  * {@code $ref}s into {@code #/components/schemas/SlotQueryFilter} and {@code SlotResponse} (reflected
- * from the actual DTOs via {@code ModelConverters}, not hand-typed — so it can't silently drift out
- * of sync the way a hand-maintained duplicate could). It is <b>not</b> expected to render as an
- * interactive operation card in Swagger UI: Swagger UI's renderer only builds those from the fixed
- * method keys (get/put/post/delete/head/options/patch/trace) — an arbitrary {@code x-} key holding
- * an Operation-shaped object is not one of them, regardless of OpenAPI version. This is a documented
- * limitation of this approach, not a claim it fully solves the problem — the human-readable
- * reference remains {@code query-endpoint.openapi.yaml}; this just makes the same information
- * discoverable to anything already consuming {@code /api-docs} programmatically.
+ * from the actual DTOs via {@code ModelConverters}, not hand-typed, so it can't silently drift out of
+ * sync the way a hand-maintained duplicate could). An extension key alone is not enough to make this
+ * render as a normal Swagger UI operation card, though — see
+ * {@link OpenApiQueryOperationFilter} for the second half of this, which promotes {@code x-query} to
+ * a genuine {@code query} field after springdoc has finished serializing.
  */
 @Configuration
 public class OpenApiQuerySupportConfig {
@@ -74,11 +71,10 @@ public class OpenApiQuerySupportConfig {
                     .operationId("querySlots")
                     .summary("Filter a user's slots by status and/or time range (HTTP QUERY)")
                     .description("""
-                            Not renderable as a normal Swagger UI operation card — Swagger UI only builds those \
-                            from the standard get/put/post/delete/... keys, and QUERY isn't one of them yet in \
-                            this project's OpenAPI tooling. See query-endpoint.openapi.yaml for the full \
-                            human-readable reference (examples, parameter docs) and design-decisions-v2.md for \
-                            why this route can't be documented like the other 12.""")
+                            Safe, idempotent read with a structured filter in the request body — see \
+                            query-endpoint.openapi.yaml for a fuller human-readable reference (more examples, \
+                            parameter notes) and design-decisions-v2.md for why this one route needed a \
+                            different documentation path than the other 12 in this API.""")
                     .addTagsItem("slot-handler")
                     .requestBody(new RequestBody()
                             .required(false)
