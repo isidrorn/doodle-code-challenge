@@ -168,6 +168,8 @@ Three layers, each testing what only it can test:
 - Documentation is layered by audience:
   - `README.md` — the front door for a reviewer: what this is, how to run it, how to consume the
     API, known limitations.
+  - `requirements-mapping.md` — requirement-by-requirement traceability: what was asked, where it
+    is implemented, which decision log argues it. Kept current, like this file.
   - `conventions.md` (this file) — normative "how we work."
   - `spec-review.md` / `design-decisions-v*.md` — append-only historical records of review passes
     and design decisions. New decisions get a new log; old logs are never edited to match the

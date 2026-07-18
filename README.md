@@ -5,6 +5,9 @@ calendar, propose meetings against other users, and a meeting confirms once ever
 participant votes yes — booking each participant's free slots automatically. Built with Spring Boot
 4.1 and Java 21.
 
+Reviewing this against the original brief? [`requirements-mapping.md`](requirements-mapping.md)
+traces every requirement to its implementation, with the decisions and trade-offs behind each.
+
 ## What it does
 
 - **Time slot management** — create slots with client-chosen start and end times (each slot is
@@ -230,7 +233,9 @@ pass — they intentionally aren't merged into one:
   (so changing it can never corrupt existing rows).
 
 How we work — architecture, conventions, and the principles behind all of the above — is written up
-declaratively in [`conventions.md`](conventions.md).
+declaratively in [`conventions.md`](conventions.md), and
+[`requirements-mapping.md`](requirements-mapping.md) ties each of the brief's requirements to the
+relevant implementation and decision log.
 
 (The original take-home prompt isn't included in this repo, since take-home exercises are typically
 not meant to be republished — its requirements are summarized in `spec-review.md`.)

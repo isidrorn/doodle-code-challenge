@@ -269,6 +269,9 @@ need `spring-boot-starter-flyway` too.
   a change that alters a practice it describes updates it in the same commit.
 - [`README.md`](README.md) — written for a technical reviewer evaluating this as a take-home
   submission: domain, API, run/consume/test instructions, known limitations.
+- [`requirements-mapping.md`](requirements-mapping.md) — traces each requirement of the brief to
+  its implementation, decisions, and trade-offs. Like conventions.md it describes the *current*
+  state: update it in the same commit as any change that alters requirement-visible behavior.
 - Six files are **historical records**, not current TODO lists — don't re-fix anything they
   describe as already fixed, and don't merge them; they document six separate passes:
   - [`spec-review.md`](spec-review.md) (v1): spec-compliance pass on the original single-slot
