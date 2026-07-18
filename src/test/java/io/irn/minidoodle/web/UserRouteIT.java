@@ -95,6 +95,25 @@ class UserRouteIT {
     }
 
     @Test
+    void createUser_returns409_whenEmailAlreadyExists() {
+        restTemplate.postForEntity("/api/users", new UserCreateRequest("Alice", "alice@test.com"), UserResponse.class);
+
+        ResponseEntity<String> res = restTemplate.postForEntity(
+                "/api/users", new UserCreateRequest("Alice Again", "alice@test.com"), String.class);
+
+        assertThat(res.getStatusCode()).isEqualTo(HttpStatus.CONFLICT);
+    }
+
+    /** @Size caps match the DB column sizes — an over-long value must be a 400, never a DB-level 500. */
+    @Test
+    void createUser_returns400_whenNameTooLong() {
+        ResponseEntity<String> res = restTemplate.postForEntity(
+                "/api/users", new UserCreateRequest("x".repeat(101), "long@test.com"), String.class);
+
+        assertThat(res.getStatusCode()).isEqualTo(HttpStatus.BAD_REQUEST);
+    }
+
+    @Test
     void createUser_returns400_whenNameBlank() {
         ResponseEntity<String> res = restTemplate.postForEntity(
                 "/api/users", new UserCreateRequest("", "alice@test.com"), String.class);

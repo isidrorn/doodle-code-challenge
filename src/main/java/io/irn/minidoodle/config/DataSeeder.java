@@ -32,10 +32,17 @@ public class DataSeeder implements ApplicationRunner {
         Instant gridStart = Instant.now().truncatedTo(ChronoUnit.HOURS);
         seedUser("Alice", "alice@example.dev", gridStart);
         seedUser("Bob", "bob@example.dev", gridStart);
-        log.info("Seed complete. Use the logged calendar IDs to call the API.");
+        log.info("Seed complete. Use the logged userIds to call the API.");
     }
 
     private void seedUser(String name, String email, Instant gridStart) {
+        // Idempotent across restarts: with a persistent DB (docker-compose volume), the seed
+        // users already exist on the second startup — re-inserting would trip the unique email
+        // constraint and crash the app.
+        if (userRepository.existsByEmail(email)) {
+            log.info("User '{}' already seeded, skipping", email);
+            return;
+        }
         User user = new User(name, email);
         Calendar calendar = new Calendar(user);
 

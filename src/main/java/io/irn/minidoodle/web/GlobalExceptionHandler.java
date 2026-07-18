@@ -12,6 +12,7 @@ import org.springframework.http.HttpStatus;
 import org.springframework.http.HttpStatusCode;
 import org.springframework.http.ProblemDetail;
 import org.springframework.http.ResponseEntity;
+import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.http.converter.HttpMessageNotReadableException;
 import org.springframework.orm.ObjectOptimisticLockingFailureException;
 import org.springframework.web.bind.MethodArgumentNotValidException;
@@ -75,9 +76,17 @@ public class GlobalExceptionHandler extends ResponseEntityExceptionHandler {
     /** A losing writer in an optimistic-lock conflict (Slot carries @Version). */
     @ExceptionHandler(ObjectOptimisticLockingFailureException.class)
     ResponseEntity<ProblemDetail> handleOptimisticLock(ObjectOptimisticLockingFailureException ex) {
-        ProblemDetail pd = ProblemDetail.forStatusAndDetail(
-                HttpStatus.CONFLICT, "The resource was modified concurrently — please retry.");
-        return ResponseEntity.status(HttpStatus.CONFLICT).body(pd);
+        return problem(HttpStatus.CONFLICT, "The resource was modified concurrently — please retry.");
+    }
+
+    /**
+     * DB constraint violations that slipped past the service-level checks — in practice the loser
+     * of a concurrent race on the unique user email (the pre-check in UserService.create gives
+     * the friendly message; this is the backstop the constraint guarantees).
+     */
+    @ExceptionHandler(DataIntegrityViolationException.class)
+    ResponseEntity<ProblemDetail> handleDataIntegrityViolation(DataIntegrityViolationException ex) {
+        return problem(HttpStatus.CONFLICT, "The request conflicts with existing data.");
     }
 
     /**

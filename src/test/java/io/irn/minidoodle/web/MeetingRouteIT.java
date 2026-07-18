@@ -100,6 +100,13 @@ class MeetingRouteIT {
     }
 
     @Test
+    void create_returns400_whenTitleTooLong() {
+        var req = new MeetingCreateRequest("x".repeat(151), "D", aliceId, T0, T1, List.of(bobId), List.of());
+        ResponseEntity<String> res = restTemplate.postForEntity("/api/meetings", req, String.class);
+        assertThat(res.getStatusCode()).isEqualTo(HttpStatus.BAD_REQUEST);
+    }
+
+    @Test
     void create_returns404_whenOrganizerMissing() {
         var req = new MeetingCreateRequest("Sync", "D", 9999L, T0, T1, List.of(bobId), List.of());
         ResponseEntity<String> res = restTemplate.postForEntity("/api/meetings", req, String.class);
