@@ -1,19 +1,20 @@
 package io.irn.minidoodle.service;
 
-import io.irn.minidoodle.config.SlotDurationConfig;
+import io.irn.minidoodle.config.TimeGridConfig;
 import io.irn.minidoodle.domain.Calendar;
 import io.irn.minidoodle.domain.Slot;
 import io.irn.minidoodle.domain.SlotStatus;
 import io.irn.minidoodle.repository.CalendarRepository;
 import io.irn.minidoodle.repository.SlotRepository;
 import io.irn.minidoodle.web.dto.SlotBulkCreateRequest;
+import io.irn.minidoodle.web.dto.SlotBulkCreateRequest.SlotCreateItem;
 import io.irn.minidoodle.web.dto.SlotQueryFilter;
 import io.irn.minidoodle.web.dto.SlotUpdateRequest;
+import java.time.Duration;
 import java.time.Instant;
 import java.util.ArrayList;
-import java.util.HashSet;
+import java.util.Comparator;
 import java.util.List;
-import java.util.Set;
 import lombok.RequiredArgsConstructor;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.PageImpl;
@@ -30,7 +31,7 @@ public class SlotService {
 
     private final SlotRepository slotRepository;
     private final CalendarRepository calendarRepository;
-    private final SlotDurationConfig slotDurationConfig;
+    private final TimeGridConfig timeGrid;
 
     /**
      * Two queries, not one — see SlotRepository.searchIds's note on why pagination and an
@@ -44,25 +45,24 @@ public class SlotService {
     }
 
     /**
-     * Creates every requested slot in one transaction — any invalid/conflicting startTime fails
+     * Creates every requested slot in one transaction — any invalid or conflicting interval fails
      * the whole batch (nothing is partially created), per the "elegir fallo en bloque" decision
-     * in the design log.
+     * in the design log. Each slot's [startTime, endTime) is client-chosen; the time grid only
+     * validates the boundaries (see TimeGridConfig).
      */
     public List<Slot> create(Long userId, SlotBulkCreateRequest request) {
-        long durationSeconds = slotDurationConfig.slotDurationMinutes() * 60L;
+        for (SlotCreateItem item : request.slots()) {
+            validateInterval(item);
+        }
 
-        Set<Instant> requestedStarts = new HashSet<>();
-        for (Instant start : request.startTimes()) {
-            if (start == null) {
-                throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "startTimes must not contain null entries");
-            }
-            if (start.getEpochSecond() % durationSeconds != 0) {
-                throw new ResponseStatusException(HttpStatus.BAD_REQUEST,
-                        "startTime %s is not aligned to the %d-minute slot grid"
-                                .formatted(start, slotDurationConfig.slotDurationMinutes()));
-            }
-            if (!requestedStarts.add(start)) {
-                throw new ResponseStatusException(HttpStatus.CONFLICT, "Duplicate startTime in request: " + start);
+        // Two new, unsaved slots can't overlap-check against each other via a repository query —
+        // catch in-request overlaps by sorting and comparing neighbours before any DB round-trip.
+        List<SlotCreateItem> sorted = new ArrayList<>(request.slots());
+        sorted.sort(Comparator.comparing(SlotCreateItem::startTime));
+        for (int i = 1; i < sorted.size(); i++) {
+            if (sorted.get(i).startTime().isBefore(sorted.get(i - 1).endTime())) {
+                throw new ResponseStatusException(HttpStatus.CONFLICT,
+                        "Requested slots overlap each other at %s".formatted(sorted.get(i).startTime()));
             }
         }
 
@@ -70,13 +70,12 @@ public class SlotService {
                 .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Calendar not found for userId=" + userId));
 
         List<Slot> newSlots = new ArrayList<>();
-        for (Instant start : request.startTimes()) {
-            Instant end = start.plusSeconds(durationSeconds);
-            if (slotRepository.existsOverlap(userId, start, end, null)) {
+        for (SlotCreateItem item : request.slots()) {
+            if (slotRepository.existsOverlap(userId, item.startTime(), item.endTime(), null)) {
                 throw new ResponseStatusException(HttpStatus.CONFLICT,
-                        "Slot at %s overlaps with an existing slot".formatted(start));
+                        "Slot [%s, %s) overlaps with an existing slot".formatted(item.startTime(), item.endTime()));
             }
-            newSlots.add(new Slot(calendar, start, end));
+            newSlots.add(new Slot(calendar, item.startTime(), item.endTime()));
         }
 
         return slotRepository.saveAll(newSlots);
@@ -89,30 +88,31 @@ public class SlotService {
             throw new ResponseStatusException(HttpStatus.CONFLICT, "Cannot modify a slot booked in a confirmed meeting");
         }
 
-        long durationSeconds = slotDurationConfig.slotDurationMinutes() * 60L;
-        Instant newStart = request.startTime() != null ? request.startTime() : slot.getStartTime();
-        Instant newEnd = request.startTime() != null ? newStart.plusSeconds(durationSeconds) : slot.getEndTime();
+        boolean timeChanged = request.startTime() != null || request.endTime() != null;
+        if (timeChanged) {
+            Instant newStart = request.startTime() != null ? request.startTime() : slot.getStartTime();
+            // startTime alone shifts the slot preserving its length; endTime alone resizes in place.
+            Instant newEnd = request.endTime() != null
+                    ? request.endTime()
+                    : newStart.plus(Duration.between(slot.getStartTime(), slot.getEndTime()));
 
-        if (request.startTime() != null && newStart.getEpochSecond() % durationSeconds != 0) {
-            throw new ResponseStatusException(HttpStatus.BAD_REQUEST,
-                    "startTime %s is not aligned to the %d-minute slot grid"
-                            .formatted(newStart, slotDurationConfig.slotDurationMinutes()));
-        }
+            validateInterval(new SlotCreateItem(newStart, newEnd));
 
-        // Serializes the overlap-check-then-write sequence per user — see
-        // CalendarRepository.findByOwnerIdForUpdate.
-        calendarRepository.findByOwnerIdForUpdate(userId)
-                .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Calendar not found for userId=" + userId));
+            // Serializes the overlap-check-then-write sequence per user — see
+            // CalendarRepository.findByOwnerIdForUpdate.
+            calendarRepository.findByOwnerIdForUpdate(userId)
+                    .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Calendar not found for userId=" + userId));
 
-        boolean overlap = slotRepository.existsOverlap(userId, newStart, newEnd, slotId);
-        if (overlap) {
-            throw new ResponseStatusException(HttpStatus.CONFLICT, "Updated slot would overlap with an existing slot");
+            if (slotRepository.existsOverlap(userId, newStart, newEnd, slotId)) {
+                throw new ResponseStatusException(HttpStatus.CONFLICT, "Updated slot would overlap with an existing slot");
+            }
+
+            slot.reschedule(newStart, newEnd);
         }
 
         if (request.status() == SlotStatus.FREE) slot.markFree();
         else if (request.status() == SlotStatus.BUSY) slot.markBusy();
 
-        slot.reschedule(newStart, newEnd);
         return slotRepository.save(slot);
     }
 
@@ -129,5 +129,24 @@ public class SlotService {
         return slotRepository.findByUserIdAndSlotId(userId, slotId)
                 .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND,
                         "Slot %d not found for userId=%d".formatted(slotId, userId)));
+    }
+
+    private void validateInterval(SlotCreateItem item) {
+        if (item == null || item.startTime() == null || item.endTime() == null) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Each slot needs both startTime and endTime");
+        }
+        if (!timeGrid.isAligned(item.startTime())) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST,
+                    "startTime %s is not aligned to the %d-minute time grid"
+                            .formatted(item.startTime(), timeGrid.timeGridMinutes()));
+        }
+        if (!timeGrid.isAligned(item.endTime())) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST,
+                    "endTime %s is not aligned to the %d-minute time grid"
+                            .formatted(item.endTime(), timeGrid.timeGridMinutes()));
+        }
+        if (!item.startTime().isBefore(item.endTime())) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "startTime must be before endTime");
+        }
     }
 }

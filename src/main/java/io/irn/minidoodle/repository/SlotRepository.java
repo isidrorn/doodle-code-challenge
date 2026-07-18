@@ -108,4 +108,25 @@ public interface SlotRepository extends JpaRepository<Slot, Long> {
             @Param("startTime") Instant startTime,
             @Param("endTime") Instant endTime
     );
+
+    /**
+     * FREE slots for a user *overlapping* [from, to) — unlike {@link #findFreeSlotsCovering},
+     * which only returns slots fully contained in the range. Used by MeetingService.availability:
+     * slots have client-chosen lengths, so a single long slot can cover many grid windows (and can
+     * extend beyond the queried range) — containment against these intervals is what decides
+     * whether a user is free for a given window.
+     */
+    @Query("""
+            select s from Slot s
+            where s.calendar.owner.id = :userId
+              and s.status = 'FREE'
+              and s.startTime < :to
+              and s.endTime   > :from
+            order by s.startTime asc
+            """)
+    List<Slot> findFreeSlotsOverlapping(
+            @Param("userId") Long userId,
+            @Param("from") Instant from,
+            @Param("to") Instant to
+    );
 }

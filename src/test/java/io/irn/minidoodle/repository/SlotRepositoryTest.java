@@ -96,4 +96,19 @@ class SlotRepositoryTest {
 
         assertThat(result).isEmpty();
     }
+
+    /**
+     * Unlike findFreeSlotsCovering (contained-only), this returns slots merely *overlapping* the
+     * range — a slot that starts before the range still counts. The BUSY slot never does.
+     */
+    @Test
+    void findFreeSlotsOverlappingIncludesPartialOverlaps_butNeverBusySlots() {
+        var result = slotRepository.findFreeSlotsOverlapping(
+                userId, now.plus(30, ChronoUnit.MINUTES), now.plus(3, ChronoUnit.HOURS));
+
+        // FREE slot [now, now+1h) overlaps the range even though it starts before it;
+        // the [now+2h, now+3h) slot inside the range is BUSY and excluded.
+        assertThat(result).hasSize(1);
+        assertThat(result.getFirst().getStartTime()).isEqualTo(now);
+    }
 }

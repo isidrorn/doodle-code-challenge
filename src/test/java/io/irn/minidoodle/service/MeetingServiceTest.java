@@ -5,7 +5,7 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.when;
 
-import io.irn.minidoodle.config.SlotDurationConfig;
+import io.irn.minidoodle.config.TimeGridConfig;
 import io.irn.minidoodle.domain.Calendar;
 import io.irn.minidoodle.domain.Meeting;
 import io.irn.minidoodle.domain.MeetingParticipant;
@@ -58,7 +58,7 @@ class MeetingServiceTest {
     @BeforeEach
     void setUp() {
         meetingService = new MeetingService(slotRepository, meetingRepository,
-                meetingParticipantRepository, userRepository, new SlotDurationConfig(30));
+                meetingParticipantRepository, userRepository, new TimeGridConfig(30));
 
         organizer = userWithId(ORGANIZER_ID, "Alice");
         required  = userWithId(REQUIRED_ID, "Bob");
@@ -78,7 +78,7 @@ class MeetingServiceTest {
     }
 
     @Test
-    void create_throwsBadRequest_whenDurationNotMultipleOfSlotDuration() {
+    void create_throwsBadRequest_whenEndNotGridAligned() {
         assertStatus(HttpStatus.BAD_REQUEST, () -> meetingService.create(request(T0, T0.plusSeconds(600))));
     }
 
@@ -266,7 +266,7 @@ class MeetingServiceTest {
     }
 
     @Test
-    void availability_throwsBadRequest_whenRangeNotMultipleOfSlotDuration() {
+    void availability_throwsBadRequest_whenToNotGridAligned() {
         assertStatus(HttpStatus.BAD_REQUEST,
                 () -> meetingService.availability(List.of(ORGANIZER_ID), T0, T0.plusSeconds(600)));
     }
@@ -292,11 +292,11 @@ class MeetingServiceTest {
         when(userRepository.existsById(REQUIRED_ID)).thenReturn(true);
         when(userRepository.existsById(OPTIONAL_ID)).thenReturn(true);
         // Organizer free the whole window; required free only the first half; optional never free.
-        when(slotRepository.findFreeSlotsCovering(ORGANIZER_ID, T0, T1))
+        when(slotRepository.findFreeSlotsOverlapping(ORGANIZER_ID, T0, T1))
                 .thenReturn(List.of(slotOwnedBy(ORGANIZER_ID, T0, MID), slotOwnedBy(ORGANIZER_ID, MID, T1)));
-        when(slotRepository.findFreeSlotsCovering(REQUIRED_ID, T0, T1))
+        when(slotRepository.findFreeSlotsOverlapping(REQUIRED_ID, T0, T1))
                 .thenReturn(List.of(slotOwnedBy(REQUIRED_ID, T0, MID)));
-        when(slotRepository.findFreeSlotsCovering(OPTIONAL_ID, T0, T1)).thenReturn(List.of());
+        when(slotRepository.findFreeSlotsOverlapping(OPTIONAL_ID, T0, T1)).thenReturn(List.of());
 
         List<AvailabilityWindow> result =
                 meetingService.availability(List.of(ORGANIZER_ID, REQUIRED_ID, OPTIONAL_ID), T0, T1);
@@ -311,17 +311,34 @@ class MeetingServiceTest {
     @Test
     void availability_returnsNoWindow_whenNoOneIsFree() {
         when(userRepository.existsById(ORGANIZER_ID)).thenReturn(true);
-        when(slotRepository.findFreeSlotsCovering(ORGANIZER_ID, T0, T1)).thenReturn(List.of());
+        when(slotRepository.findFreeSlotsOverlapping(ORGANIZER_ID, T0, T1)).thenReturn(List.of());
 
         List<AvailabilityWindow> result = meetingService.availability(List.of(ORGANIZER_ID), T0, T1);
 
         assertThat(result).isEmpty();
     }
 
+    /**
+     * Slot durations are client-chosen: one long FREE slot — even one extending beyond the
+     * queried range on both sides — must tag its owner free for every window it contains.
+     */
+    @Test
+    void availability_countsUserFree_whenOneLongSlotSpansWindows() {
+        when(userRepository.existsById(ORGANIZER_ID)).thenReturn(true);
+        when(slotRepository.findFreeSlotsOverlapping(ORGANIZER_ID, T0, T1))
+                .thenReturn(List.of(slotOwnedBy(ORGANIZER_ID, T0.minusSeconds(1800), T1.plusSeconds(1800))));
+
+        List<AvailabilityWindow> result = meetingService.availability(List.of(ORGANIZER_ID), T0, T1);
+
+        assertThat(result).hasSize(2);
+        assertThat(result.get(0).startTime()).isEqualTo(T0);
+        assertThat(result.get(1).startTime()).isEqualTo(MID);
+    }
+
     @Test
     void availability_dedupesRepeatedUserIds() {
         when(userRepository.existsById(ORGANIZER_ID)).thenReturn(true);
-        when(slotRepository.findFreeSlotsCovering(ORGANIZER_ID, T0, T1))
+        when(slotRepository.findFreeSlotsOverlapping(ORGANIZER_ID, T0, T1))
                 .thenReturn(List.of(slotOwnedBy(ORGANIZER_ID, T0, MID)));
 
         List<AvailabilityWindow> result =

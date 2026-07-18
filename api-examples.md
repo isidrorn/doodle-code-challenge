@@ -24,8 +24,8 @@ BASE="http://localhost:8080"
 
 Dates below are placeholders — swap them for something in the future relative to when you run
 this, or just run [`demo.sh`](demo.sh), which computes them dynamically. They're also shown aligned
-to the default 30-minute slot grid (`scheduling.slot-duration-minutes`) — every `startTime` must
-satisfy `epochSecond % (slotDurationMinutes * 60) == 0` or the request is rejected with 400.
+to the default 30-minute time grid (`scheduling.time-grid-minutes`) — every client-supplied
+boundary must satisfy `epochSecond % (gridMinutes * 60) == 0` or the request is rejected with 400.
 
 ---
 
@@ -98,8 +98,9 @@ curl -s -w "\n%{http_code}\n" -X POST "$BASE/api/users" \
 
 ## Slots
 
-`endTime` is never supplied by the client — it's always `startTime + slotDurationMinutes` (the
-system-wide `scheduling.slot-duration-minutes`, default 30), computed server-side.
+Each slot is a client-chosen `[startTime, endTime)` — durations are up to the user, one slot can
+span 30 minutes or three hours. The time grid (`scheduling.time-grid-minutes`, default 30) only
+validates that both boundaries sit on grid multiples; see `design-decisions-v7.md`.
 
 ```bash
 USER=1   # replace with the actual userId from the seeder log
@@ -122,28 +123,30 @@ curl -s -w "\n%{http_code}\n" "$BASE/api/users/$USER/slots?from=not-a-date"
 # Get single slot
 curl -s "$BASE/api/users/$USER/slots/1" | jq
 
-# Bulk-create slots — every startTime is created (or none are, on any failure: see
-# design-decisions-v2.md on why this is transactional all-or-nothing)
+# Bulk-create slots, each with its own duration — all are created or none are, on any failure
+# (see design-decisions-v2.md on why this is transactional all-or-nothing)
 curl -s -X POST "$BASE/api/users/$USER/slots" \
   -H "Content-Type: application/json" \
-  -d '{"startTimes":["2027-01-02T09:00:00Z","2027-01-02T09:30:00Z"]}' | jq
+  -d '{"slots":[{"startTime":"2027-01-02T09:00:00Z","endTime":"2027-01-02T09:30:00Z"},
+                {"startTime":"2027-01-02T10:00:00Z","endTime":"2027-01-02T12:00:00Z"}]}' | jq
 
-# Not grid-aligned → 400
+# A boundary off the grid → 400
 curl -s -w "\n%{http_code}\n" -X POST "$BASE/api/users/$USER/slots" \
   -H "Content-Type: application/json" \
-  -d '{"startTimes":["2027-01-02T09:07:00Z"]}'
+  -d '{"slots":[{"startTime":"2027-01-02T09:07:00Z","endTime":"2027-01-02T09:30:00Z"}]}'
 
-# A startTime that already has a slot → 409 (whole batch fails, nothing is created)
+# An interval overlapping an existing slot → 409 (whole batch fails, nothing is created)
 curl -s -w "\n%{http_code}\n" -X POST "$BASE/api/users/$USER/slots" \
   -H "Content-Type: application/json" \
-  -d '{"startTimes":["2027-01-02T09:00:00Z"]}'
+  -d '{"slots":[{"startTime":"2027-01-02T09:00:00Z","endTime":"2027-01-02T09:30:00Z"}]}'
 
 # Mark slot as BUSY
 curl -s -X PATCH "$BASE/api/users/$USER/slots/1" \
   -H "Content-Type: application/json" \
   -d '{"status":"BUSY"}' | jq
 
-# Reschedule — endTime is recomputed from the system slot duration, not supplied
+# Reschedule — startTime alone shifts the slot preserving its length;
+# endTime alone resizes it in place; sending both defines a new interval
 curl -s -X PATCH "$BASE/api/users/$USER/slots/1" \
   -H "Content-Type: application/json" \
   -d '{"startTime":"2027-01-02T10:00:00Z"}' | jq
@@ -215,7 +218,7 @@ curl -s -w "\n%{http_code}\n" -X DELETE "$BASE/api/meetings/1" \
 # of them. See design-decisions-v5.md.
 curl -s "$BASE/api/meetings/availability?userIds=$ALICE,$BOB&from=2027-01-02T09:00:00Z&to=2027-01-02T10:00:00Z" | jq
 
-# from not aligned to the slot grid → 400
+# from not aligned to the time grid → 400
 curl -s -w "\n%{http_code}\n" "$BASE/api/meetings/availability?userIds=$ALICE&from=2027-01-02T09:00:07Z&to=2027-01-02T10:00:00Z"
 # ──────────────────────────────────────────────────────────────────────────────────────────────
 ```

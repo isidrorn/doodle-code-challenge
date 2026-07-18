@@ -23,7 +23,7 @@ public class DataSeeder implements ApplicationRunner {
     private static final int SEED_SLOTS_PER_USER = 4;
 
     private final UserRepository userRepository;
-    private final SlotDurationConfig slotDurationConfig;
+    private final TimeGridConfig timeGrid;
 
     @Override
     @Transactional
@@ -39,13 +39,15 @@ public class DataSeeder implements ApplicationRunner {
         User user = new User(name, email);
         Calendar calendar = new Calendar(user);
 
-        long durationMinutes = slotDurationConfig.slotDurationMinutes();
+        long gridMinutes = timeGrid.timeGridMinutes();
         for (int i = 0; i < SEED_SLOTS_PER_USER; i++) {
-            Instant start = gridStart.plus(i * durationMinutes, ChronoUnit.MINUTES);
-            calendar.addSlot(new Slot(start, start.plus(durationMinutes, ChronoUnit.MINUTES)));
+            Instant start = gridStart.plus(i * gridMinutes, ChronoUnit.MINUTES);
+            calendar.addSlot(new Slot(start, start.plus(gridMinutes, ChronoUnit.MINUTES)));
         }
+        // One deliberately longer slot (two grid steps) — slot durations are client-chosen, the
+        // grid only constrains the boundaries.
         Instant nextDayStart = gridStart.plus(1, ChronoUnit.DAYS);
-        calendar.addSlot(new Slot(nextDayStart, nextDayStart.plus(durationMinutes, ChronoUnit.MINUTES)));
+        calendar.addSlot(new Slot(nextDayStart, nextDayStart.plus(2 * gridMinutes, ChronoUnit.MINUTES)));
 
         userRepository.save(user);
         log.info("Seeded user='{}' userId={} calendarId={}", name, user.getId(), calendar.getId());

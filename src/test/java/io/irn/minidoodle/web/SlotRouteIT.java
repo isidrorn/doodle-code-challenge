@@ -9,6 +9,7 @@ import io.irn.minidoodle.repository.SlotRepository;
 import io.irn.minidoodle.repository.UserRepository;
 import io.irn.minidoodle.web.dto.PageResponse;
 import io.irn.minidoodle.web.dto.SlotBulkCreateRequest;
+import io.irn.minidoodle.web.dto.SlotBulkCreateRequest.SlotCreateItem;
 import io.irn.minidoodle.web.dto.SlotResponse;
 import io.irn.minidoodle.web.dto.SlotUpdateRequest;
 import org.junit.jupiter.api.BeforeEach;
@@ -46,7 +47,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 @ActiveProfiles("test")
 class SlotRouteIT {
 
-    // 30-minute grid (default scheduling.slot-duration-minutes)
+    // 30-minute grid (default scheduling.time-grid-minutes)
     static final Instant T0 = Instant.parse("2026-06-01T09:00:00Z");
     static final Instant T1 = Instant.parse("2026-06-01T09:30:00Z");
     static final Instant T2 = Instant.parse("2026-06-01T10:00:00Z");
@@ -206,7 +207,9 @@ class SlotRouteIT {
     @Test
     void createSlots_returns201_andAllSlotsAreFree() {
         ResponseEntity<SlotResponse[]> res = restTemplate.postForEntity(
-                "/api/users/{uid}/slots", new SlotBulkCreateRequest(List.of(T2, T3)), SlotResponse[].class, userId);
+                "/api/users/{uid}/slots",
+                bulkRequest(item(T2, T3), item(T3, T3.plus(30, ChronoUnit.MINUTES))),
+                SlotResponse[].class, userId);
 
         assertThat(res.getStatusCode()).isEqualTo(HttpStatus.CREATED);
         assertThat(res.getBody()).hasSize(2);
@@ -215,11 +218,33 @@ class SlotRouteIT {
         assertThat(res.getBody()[1].endTime()).isEqualTo(T3.plus(30, ChronoUnit.MINUTES));
     }
 
+    /** Slot durations are client-chosen — the grid only validates the boundaries. */
+    @Test
+    void createSlots_allowsClientChosenDurations() {
+        ResponseEntity<SlotResponse[]> res = restTemplate.postForEntity(
+                "/api/users/{uid}/slots",
+                bulkRequest(item(T2, T3.plus(30, ChronoUnit.MINUTES))),   // one 90-minute slot
+                SlotResponse[].class, userId);
+
+        assertThat(res.getStatusCode()).isEqualTo(HttpStatus.CREATED);
+        assertThat(res.getBody()).hasSize(1);
+        assertThat(res.getBody()[0].startTime()).isEqualTo(T2);
+        assertThat(res.getBody()[0].endTime()).isEqualTo(T3.plus(30, ChronoUnit.MINUTES));
+    }
+
+    @Test
+    void createSlots_returns400_whenEndTimeNotGridAligned() {
+        ResponseEntity<String> res = restTemplate.postForEntity(
+                "/api/users/{uid}/slots", bulkRequest(item(T2, T3.plusSeconds(60))), String.class, userId);
+
+        assertThat(res.getStatusCode()).isEqualTo(HttpStatus.BAD_REQUEST);
+    }
+
     @Test
     void createSlots_returns409_whenOverlappingSlotExists() {
-        // T0-T1 already seeded; requesting the exact same startTime is a conflict
+        // T0-T1 already seeded; requesting the exact same interval is a conflict
         ResponseEntity<String> res = restTemplate.postForEntity(
-                "/api/users/{uid}/slots", new SlotBulkCreateRequest(List.of(T0)), String.class, userId);
+                "/api/users/{uid}/slots", bulkRequest(item(T0, T1)), String.class, userId);
 
         assertThat(res.getStatusCode()).isEqualTo(HttpStatus.CONFLICT);
     }
@@ -228,7 +253,7 @@ class SlotRouteIT {
     void createSlots_returns409_andCreatesNothing_whenOneOfManyOverlaps() {
         // T2 is free, T0 conflicts — the whole batch must fail, not just T0
         ResponseEntity<String> res = restTemplate.postForEntity(
-                "/api/users/{uid}/slots", new SlotBulkCreateRequest(List.of(T2, T0)), String.class, userId);
+                "/api/users/{uid}/slots", bulkRequest(item(T2, T3), item(T0, T1)), String.class, userId);
 
         assertThat(res.getStatusCode()).isEqualTo(HttpStatus.CONFLICT);
 
@@ -239,13 +264,13 @@ class SlotRouteIT {
     @Test
     void createSlots_returns400_whenStartTimeNotGridAligned() {
         ResponseEntity<String> res = restTemplate.postForEntity(
-                "/api/users/{uid}/slots", new SlotBulkCreateRequest(List.of(T2.plusSeconds(60))), String.class, userId);
+                "/api/users/{uid}/slots", bulkRequest(item(T2.plusSeconds(60), T3)), String.class, userId);
 
         assertThat(res.getStatusCode()).isEqualTo(HttpStatus.BAD_REQUEST);
     }
 
     @Test
-    void createSlots_returns400_whenStartTimesEmpty() {
+    void createSlots_returns400_whenSlotsEmpty() {
         ResponseEntity<String> res = restTemplate.postForEntity(
                 "/api/users/{uid}/slots", new SlotBulkCreateRequest(List.of()), String.class, userId);
 
@@ -255,7 +280,7 @@ class SlotRouteIT {
     @Test
     void createSlots_returns400_whenUserIdNotNumeric() {
         ResponseEntity<String> res = restTemplate.postForEntity(
-                "/api/users/{uid}/slots", new SlotBulkCreateRequest(List.of(T2)), String.class, "not-a-number");
+                "/api/users/{uid}/slots", bulkRequest(item(T2, T3)), String.class, "not-a-number");
 
         assertThat(res.getStatusCode()).isEqualTo(HttpStatus.BAD_REQUEST);
     }
@@ -270,7 +295,7 @@ class SlotRouteIT {
      */
     @Test
     void createSlots_concurrentOverlappingRequests_onlyOneSucceeds() throws Exception {
-        var req = new SlotBulkCreateRequest(List.of(T2));
+        var req = bulkRequest(item(T2, T3));
         int threadCount = 8;
 
         ExecutorService pool = Executors.newFixedThreadPool(threadCount);
@@ -304,7 +329,7 @@ class SlotRouteIT {
     @Test
     void patchSlot_marksAsBusy() {
         HttpHeaders headers = jsonHeaders();
-        var req = new HttpEntity<>(new SlotUpdateRequest(null, SlotStatus.BUSY), headers);
+        var req = new HttpEntity<>(new SlotUpdateRequest(null, null, SlotStatus.BUSY), headers);
 
         ResponseEntity<SlotResponse> res = restTemplate.exchange(
                 "/api/users/{uid}/slots/{sid}", HttpMethod.PATCH, req, SlotResponse.class, userId, slotId);
@@ -313,10 +338,11 @@ class SlotRouteIT {
         assertThat(res.getBody().status()).isEqualTo(SlotStatus.BUSY);
     }
 
+    /** startTime alone shifts the slot preserving its length (the seeded slot is 30 minutes). */
     @Test
-    void patchSlot_reschedule_recomputesEndTimeFromSystemDuration() {
+    void patchSlot_rescheduleByStartTime_shiftsSlotPreservingLength() {
         HttpHeaders headers = jsonHeaders();
-        var req = new HttpEntity<>(new SlotUpdateRequest(T2, null), headers);
+        var req = new HttpEntity<>(new SlotUpdateRequest(T2, null, null), headers);
 
         ResponseEntity<SlotResponse> res = restTemplate.exchange(
                 "/api/users/{uid}/slots/{sid}", HttpMethod.PATCH, req, SlotResponse.class, userId, slotId);
@@ -326,10 +352,24 @@ class SlotRouteIT {
         assertThat(res.getBody().endTime()).isEqualTo(T3);
     }
 
+    /** endTime alone resizes the slot in place. */
+    @Test
+    void patchSlot_changeEndTime_resizesSlot() {
+        HttpHeaders headers = jsonHeaders();
+        var req = new HttpEntity<>(new SlotUpdateRequest(null, T2, null), headers);
+
+        ResponseEntity<SlotResponse> res = restTemplate.exchange(
+                "/api/users/{uid}/slots/{sid}", HttpMethod.PATCH, req, SlotResponse.class, userId, slotId);
+
+        assertThat(res.getStatusCode()).isEqualTo(HttpStatus.OK);
+        assertThat(res.getBody().startTime()).isEqualTo(T0);
+        assertThat(res.getBody().endTime()).isEqualTo(T2);
+    }
+
     @Test
     void patchSlot_returns400_whenRescheduleNotGridAligned() {
         HttpHeaders headers = jsonHeaders();
-        var req = new HttpEntity<>(new SlotUpdateRequest(T2.plusSeconds(60), null), headers);
+        var req = new HttpEntity<>(new SlotUpdateRequest(T2.plusSeconds(60), null, null), headers);
 
         ResponseEntity<String> res = restTemplate.exchange(
                 "/api/users/{uid}/slots/{sid}", HttpMethod.PATCH, req, String.class, userId, slotId);
@@ -364,7 +404,7 @@ class SlotRouteIT {
         TestSupport.seedSlot(slotRepository, calendarRepository, userId, T2, T3);
 
         HttpHeaders headers = jsonHeaders();
-        var req = new HttpEntity<>(new SlotUpdateRequest(T2, null), headers);
+        var req = new HttpEntity<>(new SlotUpdateRequest(T2, null, null), headers);
 
         ResponseEntity<String> res = restTemplate.exchange(
                 "/api/users/{uid}/slots/{sid}", HttpMethod.PATCH, req, String.class, userId, slotId);
@@ -384,6 +424,14 @@ class SlotRouteIT {
     }
 
     // ── helpers ───────────────────────────────────────────────────────────────
+
+    private static SlotCreateItem item(Instant start, Instant end) {
+        return new SlotCreateItem(start, end);
+    }
+
+    private static SlotBulkCreateRequest bulkRequest(SlotCreateItem... items) {
+        return new SlotBulkCreateRequest(List.of(items));
+    }
 
     private ResponseEntity<PageResponse<SlotResponse>> listSlots(Long uid) {
         return restTemplate.exchange(

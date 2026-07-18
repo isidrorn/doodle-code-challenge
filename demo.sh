@@ -67,7 +67,7 @@ iso_from_epoch() {
 
 NOW=$(date -u +%s)
 DAY=86400
-SLOT=1800   # matches the default scheduling.slot-duration-minutes (30)
+SLOT=1800   # one step of the default scheduling.time-grid-minutes (30)
 
 # ── 0. health check ───────────────────────────────────────────────────────────
 
@@ -113,11 +113,12 @@ S2_START=$(iso_from_epoch $((GRID_START + SLOT)))
 MEETING_START="$S1_START"
 MEETING_END=$(iso_from_epoch $((GRID_START + 2 * SLOT)))
 
-section "Bulk-create two consecutive slots for Alice and for Bob (same window)"
-call POST "/api/users/$ALICE_ID/slots" "{\"startTimes\":[\"$S1_START\",\"$S2_START\"]}"
+section "Bulk-create two consecutive 30-min slots for Alice and one 60-min slot for Bob (same window)"
+echo "(slot durations are client-chosen — the grid only validates the boundaries, see design-decisions-v7.md)"
+call POST "/api/users/$ALICE_ID/slots" "{\"slots\":[{\"startTime\":\"$S1_START\",\"endTime\":\"$S2_START\"},{\"startTime\":\"$S2_START\",\"endTime\":\"$MEETING_END\"}]}"
 ALICE_SLOT1=$(jq -r .[0].id <<<"$HTTP_BODY")
 
-call POST "/api/users/$BOB_ID/slots" "{\"startTimes\":[\"$S1_START\",\"$S2_START\"]}"
+call POST "/api/users/$BOB_ID/slots" "{\"slots\":[{\"startTime\":\"$S1_START\",\"endTime\":\"$MEETING_END\"}]}"
 
 echo
 echo "(Carol gets no slots at all — used below to show a missing-coverage participant"
@@ -141,11 +142,11 @@ call GET "/api/users/$ALICE_ID/slots?from=$S1_START&to=$S2_START"
 section "Validation: malformed filter value → 400, never silently ignored"
 call GET "/api/users/$ALICE_ID/slots?from=not-a-date"
 
-section "Validation: startTime not aligned to the slot grid → 400"
-call POST "/api/users/$ALICE_ID/slots" "{\"startTimes\":[\"$(iso_from_epoch $((GRID_START + 60)))\"]}"
+section "Validation: startTime not aligned to the time grid → 400"
+call POST "/api/users/$ALICE_ID/slots" "{\"slots\":[{\"startTime\":\"$(iso_from_epoch $((GRID_START + 60)))\",\"endTime\":\"$S2_START\"}]}"
 
-section "Bulk-create a slot that already exists → 409, whole batch fails"
-call POST "/api/users/$ALICE_ID/slots" "{\"startTimes\":[\"$S1_START\"]}"
+section "Bulk-create a slot overlapping an existing one → 409, whole batch fails"
+call POST "/api/users/$ALICE_ID/slots" "{\"slots\":[{\"startTime\":\"$S1_START\",\"endTime\":\"$S2_START\"}]}"
 
 section "Validation: PATCH with an invalid status value → 400, not 500"
 call PATCH "/api/users/$ALICE_ID/slots/$ALICE_SLOT1" '{"status":"NOT_A_STATUS"}'

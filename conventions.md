@@ -76,9 +76,10 @@ config/       configuration properties, seeding, OpenAPI config
   capped at 100, 400 when out of range) returning a `PageResponse<T>` envelope — never a bare
   array.
 - Timestamps are `Instant`, serialized as ISO-8601 UTC. No local times, no time zones in the API.
-- Server-derived values are never accepted from clients: `endTime` is always computed as
-  `startTime + slotDurationMinutes` (a system-wide `@ConfigurationProperties` parameter, not
-  per-slot data).
+- **Configuration validates; it never derives domain data.** The time grid
+  (`scheduling.time-grid-minutes`) constrains which boundaries a client may submit — it is never
+  used to compute or reinterpret stored values, so changing it cannot corrupt existing rows.
+  Slot intervals are client-chosen data, validated at write time.
 - Bulk operations are transactional all-or-nothing: one invalid entry rolls back the whole batch.
   No partial-success/207 semantics.
 

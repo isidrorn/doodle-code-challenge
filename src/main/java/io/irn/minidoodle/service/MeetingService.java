@@ -1,6 +1,6 @@
 package io.irn.minidoodle.service;
 
-import io.irn.minidoodle.config.SlotDurationConfig;
+import io.irn.minidoodle.config.TimeGridConfig;
 import io.irn.minidoodle.domain.Meeting;
 import io.irn.minidoodle.domain.MeetingParticipant;
 import io.irn.minidoodle.domain.MeetingStatus;
@@ -18,7 +18,6 @@ import java.time.Duration;
 import java.time.Instant;
 import java.util.ArrayList;
 import java.util.HashMap;
-import java.util.HashSet;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
@@ -46,7 +45,7 @@ public class MeetingService {
     private final MeetingRepository meetingRepository;
     private final MeetingParticipantRepository meetingParticipantRepository;
     private final UserRepository userRepository;
-    private final SlotDurationConfig slotDurationConfig;
+    private final TimeGridConfig timeGrid;
 
     /**
      * Creates a meeting in PROPOSED status. No slot is searched or locked here — that only
@@ -59,15 +58,13 @@ public class MeetingService {
         if (!start.isBefore(end)) {
             throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "startTime must be before endTime");
         }
-
-        long durationMinutes = slotDurationConfig.slotDurationMinutes();
-        if (start.getEpochSecond() % (durationMinutes * 60) != 0) {
+        if (!timeGrid.isAligned(start)) {
             throw new ResponseStatusException(HttpStatus.BAD_REQUEST,
-                    "startTime %s is not aligned to the %d-minute slot grid".formatted(start, durationMinutes));
+                    "startTime %s is not aligned to the %d-minute time grid".formatted(start, timeGrid.timeGridMinutes()));
         }
-        if (Duration.between(start, end).toMinutes() % durationMinutes != 0) {
+        if (!timeGrid.isAligned(end)) {
             throw new ResponseStatusException(HttpStatus.BAD_REQUEST,
-                    "Meeting duration must be an exact multiple of %d minutes".formatted(durationMinutes));
+                    "endTime %s is not aligned to the %d-minute time grid".formatted(end, timeGrid.timeGridMinutes()));
         }
 
         User organizer = userRepository.findById(request.organizerUserId())
@@ -110,32 +107,34 @@ public class MeetingService {
     }
 
     /**
-     * Finds every slot-grid window in [from, to) where at least one of {@code userIds} is FREE —
+     * Finds every grid window in [from, to) where at least one of {@code userIds} is FREE —
      * the "suggest a time that works" query a real Doodle needs, that proposing a meeting alone
      * doesn't provide (proposing already requires the caller to have picked a startTime/endTime).
-     * Reuses {@link SlotRepository#findFreeSlotsCovering}, the same per-user "give me FREE slots in
-     * this range" query {@link #confirm} already uses for a single meeting window — here it's
-     * called once per requested user instead of once per participant of one meeting.
+     * A user is free for a window when one of their FREE slots contains it entirely — slots have
+     * client-chosen lengths, so this is interval containment against
+     * {@link SlotRepository#findFreeSlotsOverlapping}, not a start-time set lookup. A window can
+     * never straddle two slots: slot boundaries and windows both sit on the grid, and a window is
+     * exactly one grid step wide.
      */
     @Transactional(readOnly = true)
     public List<AvailabilityWindow> availability(List<Long> userIds, Instant from, Instant to) {
         if (!from.isBefore(to)) {
             throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "from must be before to");
         }
+        if (!timeGrid.isAligned(from)) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST,
+                    "from %s is not aligned to the %d-minute time grid".formatted(from, timeGrid.timeGridMinutes()));
+        }
+        if (!timeGrid.isAligned(to)) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST,
+                    "to %s is not aligned to the %d-minute time grid".formatted(to, timeGrid.timeGridMinutes()));
+        }
 
-        long durationSeconds = slotDurationConfig.slotDurationMinutes() * 60L;
-        if (from.getEpochSecond() % durationSeconds != 0) {
-            throw new ResponseStatusException(HttpStatus.BAD_REQUEST,
-                    "from %s is not aligned to the %d-minute slot grid".formatted(from, slotDurationConfig.slotDurationMinutes()));
-        }
-        long totalWindows = Duration.between(from, to).toSeconds() / durationSeconds;
-        if (Duration.between(from, to).toSeconds() % durationSeconds != 0) {
-            throw new ResponseStatusException(HttpStatus.BAD_REQUEST,
-                    "the range from-to must be an exact multiple of %d minutes".formatted(slotDurationConfig.slotDurationMinutes()));
-        }
+        long stepSeconds = timeGrid.stepSeconds();
+        long totalWindows = Duration.between(from, to).toSeconds() / stepSeconds;
         if (totalWindows > MAX_AVAILABILITY_WINDOWS) {
             throw new ResponseStatusException(HttpStatus.BAD_REQUEST,
-                    "requested range spans %d slot windows, exceeding the maximum of %d — narrow from/to"
+                    "requested range spans %d grid windows, exceeding the maximum of %d — narrow from/to"
                             .formatted(totalWindows, MAX_AVAILABILITY_WINDOWS));
         }
 
@@ -146,21 +145,19 @@ public class MeetingService {
             }
         }
 
-        Map<Long, Set<Instant>> freeStartsByUser = new HashMap<>();
+        Map<Long, List<Slot>> freeSlotsByUser = new HashMap<>();
         for (Long userId : distinctUserIds) {
-            Set<Instant> freeStarts = new HashSet<>();
-            for (Slot slot : slotRepository.findFreeSlotsCovering(userId, from, to)) {
-                freeStarts.add(slot.getStartTime());
-            }
-            freeStartsByUser.put(userId, freeStarts);
+            freeSlotsByUser.put(userId, slotRepository.findFreeSlotsOverlapping(userId, from, to));
         }
 
         List<AvailabilityWindow> windows = new ArrayList<>();
-        for (Instant windowStart = from; windowStart.isBefore(to); windowStart = windowStart.plusSeconds(durationSeconds)) {
-            Instant windowEnd = windowStart.plusSeconds(durationSeconds);
-            Instant start = windowStart;
+        for (Instant cursor = from; cursor.isBefore(to); cursor = cursor.plusSeconds(stepSeconds)) {
+            Instant windowStart = cursor;
+            Instant windowEnd = cursor.plusSeconds(stepSeconds);
             List<Long> freeUserIds = distinctUserIds.stream()
-                    .filter(userId -> freeStartsByUser.get(userId).contains(start))
+                    .filter(userId -> freeSlotsByUser.get(userId).stream()
+                            .anyMatch(slot -> !slot.getStartTime().isAfter(windowStart)
+                                    && !slot.getEndTime().isBefore(windowEnd)))
                     .toList();
             if (!freeUserIds.isEmpty()) {
                 windows.add(new AvailabilityWindow(windowStart, windowEnd, freeUserIds));

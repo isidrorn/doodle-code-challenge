@@ -7,8 +7,11 @@ participant votes yes — booking each participant's free slots automatically. B
 
 ## What it does
 
-- **Time slot management** — create slots with a system-wide, configurable duration
-  (`scheduling.slot-duration-minutes`), modify or delete them, mark them busy/free.
+- **Time slot management** — create slots with client-chosen start and end times (each slot is
+  whatever time frame the user says it is), modify or delete them, mark them busy/free. A
+  configurable time grid (`scheduling.time-grid-minutes`, default 30) validates every boundary —
+  on a 5-minute grid, `09:05` is a valid boundary and `09:12` isn't. See
+  [`design-decisions-v7.md`](design-decisions-v7.md).
 - **Meeting scheduling** — propose a meeting with a title, description, and participants (each with
   a role — organizer / required / optional); once every required participant votes yes, the meeting
   confirms and books each participant's free slots for the window automatically.
@@ -34,10 +37,12 @@ User  1 ──── 1  Calendar  1 ──── N  Slot  N ──── M  Meet
 - `User` cascades `ALL` to its `Calendar`, which cascades `ALL` to its `Slot`s. Always persist
   through `userRepository.save(user)` when the user is new — saving from the `Calendar` or `Slot`
   side does not cascade upward and throws `TransientPropertyValueException`.
-- **Slot duration is a system parameter** (`scheduling.slot-duration-minutes`, default 30 —
-  `SlotDurationConfig`), not something a client chooses per-slot. Every slot's `endTime` is always
-  `startTime + slotDurationMinutes`, and every `startTime` must land on that grid
-  (`epochSecond % (slotDurationMinutes * 60) == 0`).
+- **Slots have client-chosen durations; the time grid only validates boundaries.**
+  `scheduling.time-grid-minutes` (default 30, `TimeGridConfig`) requires every client-supplied
+  boundary — slot start/end, meeting start/end, availability range — to be a grid multiple
+  (`epochSecond % (gridMinutes * 60) == 0`). The grid never derives or rewrites stored data, so
+  changing the parameter can't corrupt existing rows: loosening it keeps everything valid,
+  tightening it only gates future writes ([`design-decisions-v7.md`](design-decisions-v7.md)).
 - A `Slot` can belong to several `PROPOSED` meetings at once, but at most one `CONFIRMED` one — that
   constraint isn't enforced at the DB level (the `slot_meeting` join table has no such check);
   `MeetingService.confirm()` enforces it in code, by only ever calling `Meeting.addSlot()` on slots
@@ -77,9 +82,9 @@ GET    /api/users/{userId}                         → get user
 POST   /api/users                                  → create user (also creates their calendar)
 
 GET    /api/users/{userId}/slots                   → list slots (optional status/from/to filters; paginated)
-POST   /api/users/{userId}/slots                   → bulk-create slots (startTimes[] in body)
+POST   /api/users/{userId}/slots                   → bulk-create slots (slots[{startTime,endTime}] in body)
 GET    /api/users/{userId}/slots/{slotId}          → get slot
-PATCH  /api/users/{userId}/slots/{slotId}          → update slot (startTime, status)
+PATCH  /api/users/{userId}/slots/{slotId}          → update slot (startTime, endTime, status)
 DELETE /api/users/{userId}/slots/{slotId}          → delete slot
 
 POST   /api/meetings                                         → propose a meeting (PROPOSED)
@@ -135,10 +140,11 @@ curl http://localhost:8080/api/users/1/slots
 # Filter by status and/or time range, second page of 10
 curl "http://localhost:8080/api/users/1/slots?status=FREE&page=1&size=10"
 
-# Bulk-create slots — endTime is always startTime + the system's slot duration
+# Bulk-create slots — each with its own client-chosen start/end (boundaries must sit on the grid)
 curl -X POST http://localhost:8080/api/users/1/slots \
   -H "Content-Type: application/json" \
-  -d '{"startTimes":["2027-01-01T09:00:00Z","2027-01-01T09:30:00Z"]}'
+  -d '{"slots":[{"startTime":"2027-01-01T09:00:00Z","endTime":"2027-01-01T09:30:00Z"},
+               {"startTime":"2027-01-01T10:00:00Z","endTime":"2027-01-01T12:00:00Z"}]}'
 ```
 
 The filter params (`status`, `from`, `to`) are all optional — with none present the endpoint simply
@@ -162,7 +168,7 @@ mvn test -Dtest=*Test,*IT
 | Repository (`@DataJpaTest`) | `SlotRepositoryTest`, `CalendarRepositoryTest` |
 | Integration (`@SpringBootTest`, `RANDOM_PORT`, H2) | `UserRouteIT`, `SlotRouteIT`, `MeetingRouteIT` |
 
-113 tests total. Integration tests share seeding/cleanup helpers from
+123 tests total. Integration tests share seeding/cleanup helpers from
 [`TestSupport`](src/test/java/io/irn/minidoodle/TestSupport.java) rather than a common base
 class — each IT class carries its own `@SpringBootTest`/`@AutoConfigureTestRestTemplate` setup.
 
@@ -218,6 +224,10 @@ pass — they intentionally aren't merged into one:
   WebMvc.fn functional routes to standard `@RestController` classes, deleting the hand-rolled
   validation/exception-handling infrastructure the functional style had required, with the API
   contract held fixed by the integration tests.
+- [`design-decisions-v7.md`](design-decisions-v7.md) — per-slot durations on a validation-only
+  time grid: why "create time slots with configurable duration" means the user picks each slot's
+  start and end, and why the grid parameter validates new writes instead of deriving domain data
+  (so changing it can never corrupt existing rows).
 
 How we work — architecture, conventions, and the principles behind all of the above — is written up
 declaratively in [`conventions.md`](conventions.md).

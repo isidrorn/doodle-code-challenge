@@ -58,7 +58,7 @@ web/          @RestController classes (UserController, SlotController, MeetingCo
 service/      @Service @Transactional — the only layer with business logic
 repository/   JpaRepository — no access from web/
 domain/       JPA entities — no dependency on any other layer
-config/       DataSeeder, OpenApiConfig, SlotDurationConfig
+config/       DataSeeder, OpenApiConfig, TimeGridConfig
 ```
 
 ### Error handling
@@ -102,11 +102,15 @@ User 1──1 Calendar 1──N Slot N──M Meeting 1──N MeetingParticipan
   side) has no cascade back up. Always persist through `userRepository.save(user)` when the user is
   new — saving from the `Calendar` or `Slot` side does not cascade upward and throws
   `TransientPropertyValueException`.
-- **Slot duration is a system parameter** (`SlotDurationConfig`, `scheduling.slot-duration-minutes`,
-  default 30), not chosen per-slot. `endTime` is always computed as `startTime + slotDurationMinutes`
-  — never accepted from a client — and every `startTime` (bulk slot creation, `PATCH` reschedule,
-  and meeting creation) must satisfy `epochSecond % (slotDurationMinutes * 60) == 0`, checked in
-  `SlotService` and `MeetingService`.
+- **Slots are client-chosen intervals; the time grid only validates boundaries.** `TimeGridConfig`
+  (`scheduling.time-grid-minutes`, default 30) requires every client-supplied boundary — slot
+  start/end (bulk create and `PATCH`), meeting start/end, availability `from`/`to` — to satisfy
+  `epochSecond % (gridMinutes * 60) == 0`, checked in `SlotService` and `MeetingService`. The grid
+  never derives stored data (no computed `endTime`), so changing the parameter can't invalidate
+  existing rows — a status-only `PATCH` deliberately skips time validation for exactly this
+  reason. Meetings book *whole* slots and only slots *fully contained* in the meeting window; a
+  participant whose free slot overshoots the window is silently skipped, same rule as v2's
+  missing-coverage skip. See design-decisions-v7.md before touching any of this.
 - `Slot` carries `@Version` for optimistic locking; a losing concurrent writer gets mapped to 409 by
   `GlobalExceptionHandler`.
 - `Slot ─ Meeting` is `@ManyToMany` via the `slot_meeting` join table (owned by `Meeting`). A slot
@@ -137,7 +141,7 @@ User 1──1 Calendar 1──N Slot N──M Meeting 1──N MeetingParticipan
   `Calendar.slots`, which would mean reloading every existing slot for that user on every creation.
   `Calendar.addSlot()` itself is still fine to use where the collection is already needed (e.g.
   `DataSeeder`, `TestSupport.seedSlot`) — just don't reach for it on a hot, per-request path. Bulk
-  slot creation (`SlotBulkCreateRequest.startTimes`) is transactional all-or-nothing: any invalid or
+  slot creation (`SlotBulkCreateRequest.slots`) is transactional all-or-nothing: any invalid or
   conflicting entry throws inside the single `@Transactional` service method, so the whole batch
   rolls back — no partial-success/207 handling needed.
 - `spring.jpa.open-in-view: false` is set deliberately. Any repository method whose result gets
@@ -176,14 +180,14 @@ GET    /api/users/{userId}                                    get user
 POST   /api/users                                              create user (also creates their Calendar)
 
 GET    /api/users/{userId}/slots                              list slots (optional status/from/to filters; paginated)
-POST   /api/users/{userId}/slots                              bulk-create slots (startTimes[] in body)
+POST   /api/users/{userId}/slots                              bulk-create slots (slots[{startTime,endTime}] in body)
 GET    /api/users/{userId}/slots/{slotId}                     get slot
 PATCH  /api/users/{userId}/slots/{slotId}                     update slot (startTime, status)
 DELETE /api/users/{userId}/slots/{slotId}                     delete slot
 
 POST   /api/meetings                                          propose a meeting (PROPOSED)
 GET    /api/meetings/{meetingId}                               get meeting
-DELETE /api/meetings/{meetingId}                              cancel meeting (organizer only; body: {userId})
+DELETE /api/meetings/{meetingId}                               cancel meeting (organizer only; body: {userId})
 POST   /api/meetings/{meetingId}/participants/{userId}/vote   cast a vote (body: {vote})
 GET    /api/meetings/availability                              find free windows across users (userIds, from, to params)
 ```
@@ -244,7 +248,7 @@ few times in a row, since a broken lock would only show up as occasional extra `
 - `@MockBean`/`@SpyBean` are gone in Spring Boot 4 — use plain `@Mock` +
   `@ExtendWith(MockitoExtension.class)` for unit tests.
 - `DataSeeder` is excluded under the `test` profile (`@Profile("!test")`).
-- 113 tests total as of the `@RestController` conversion (design-decisions-v6.md).
+- 123 tests total as of the time-grid redesign (design-decisions-v7.md).
 
 ### Schema management: Flyway (docker-compose/Postgres only) vs. Hibernate auto-DDL (local/test)
 
@@ -285,3 +289,7 @@ need `spring-boot-starter-flyway` too.
     `ResponseEntityExceptionHandler` wiring rationale. The v1–v5 logs reference the pre-v6 web
     machinery (`RequestValidator`, `RouterExceptionFilter`, handlers) in their historical context;
     that's intentional, don't "fix" them.
+  - [`design-decisions-v7.md`](design-decisions-v7.md): per-slot durations on a validation-only
+    time grid — reverses v2's fixed-duration model; read before touching `TimeGridConfig`,
+    slot creation/PATCH validation, or `MeetingService.availability()`. (v2–v5 describe the
+    fixed-duration era in their historical context; same rule, don't "fix" them.)

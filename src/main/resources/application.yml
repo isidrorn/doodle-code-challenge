@@ -17,7 +17,7 @@ server:
   port: 8080
 
 scheduling:
-  slot-duration-minutes: 30
+  time-grid-minutes: 30
 
 management:
   endpoints:
