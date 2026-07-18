@@ -58,6 +58,7 @@ web/          @RestController classes (UserController, SlotController, MeetingCo
 service/      @Service @Transactional — the only layer with business logic
 repository/   JpaRepository — no access from web/
 domain/       JPA entities — no dependency on any other layer
+exception/    HTTP-agnostic domain exceptions thrown by services, mapped to statuses in web/
 config/       DataSeeder, OpenApiConfig, TimeGridConfig
 ```
 
@@ -72,7 +73,11 @@ handlers, that catch-all would swallow Spring MVC's own exceptions
 overrides in the class only sharpen detail messages; don't add a new `@ExceptionHandler` for an
 exception type the parent already handles (same-type handlers in one advice are an ambiguity error
 at startup) — override the parent's protected method instead. Service-layer code signals errors by
-throwing `ResponseStatusException` with the right status; it never builds responses.
+throwing the HTTP-agnostic domain exceptions in `io.irn.minidoodle.exception`
+(`NotFoundException` → 404, `ConflictException` → 409, `InvalidInputException` → 400,
+`ForbiddenException` → 403); the advice owns the status mapping, and no Spring Web type appears
+below the web layer. The advice keeps a `ResponseStatusException` handler purely as a framework
+safety net — application code must never throw it.
 
 ### Validation
 
@@ -85,7 +90,7 @@ throwing `ResponseStatusException` with the right status; it never builds respon
   raises `HandlerMethodValidationException` → 400, no `@Validated` needed. Out-of-range pagination
   is rejected with 400, never silently clamped.
 - **Business-rule validation** (grid alignment, overlap, state-machine legality) lives in the
-  services, throwing `ResponseStatusException`.
+  services, throwing the domain exceptions above (`InvalidInputException`, `ConflictException`, …).
 - Path variables are typed (`@PathVariable Long userId`) — malformed values become
   `MethodArgumentTypeMismatchException` → 400 via `GlobalExceptionHandler`.
 

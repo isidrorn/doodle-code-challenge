@@ -4,6 +4,9 @@ import io.irn.minidoodle.config.TimeGridConfig;
 import io.irn.minidoodle.domain.Calendar;
 import io.irn.minidoodle.domain.Slot;
 import io.irn.minidoodle.domain.SlotStatus;
+import io.irn.minidoodle.exception.ConflictException;
+import io.irn.minidoodle.exception.InvalidInputException;
+import io.irn.minidoodle.exception.NotFoundException;
 import io.irn.minidoodle.repository.CalendarRepository;
 import io.irn.minidoodle.repository.SlotRepository;
 import io.irn.minidoodle.web.dto.SlotBulkCreateRequest;
@@ -19,10 +22,8 @@ import lombok.RequiredArgsConstructor;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.PageImpl;
 import org.springframework.data.domain.Pageable;
-import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
-import org.springframework.web.server.ResponseStatusException;
 
 @Service
 @RequiredArgsConstructor
@@ -61,19 +62,17 @@ public class SlotService {
         sorted.sort(Comparator.comparing(SlotCreateItem::startTime));
         for (int i = 1; i < sorted.size(); i++) {
             if (sorted.get(i).startTime().isBefore(sorted.get(i - 1).endTime())) {
-                throw new ResponseStatusException(HttpStatus.CONFLICT,
-                        "Requested slots overlap each other at %s".formatted(sorted.get(i).startTime()));
+                throw new ConflictException("Requested slots overlap each other at %s".formatted(sorted.get(i).startTime()));
             }
         }
 
         Calendar calendar = calendarRepository.findByOwnerIdForUpdate(userId)
-                .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Calendar not found for userId=" + userId));
+                .orElseThrow(() -> new NotFoundException("Calendar not found for userId=" + userId));
 
         List<Slot> newSlots = new ArrayList<>();
         for (SlotCreateItem item : request.slots()) {
             if (slotRepository.existsOverlap(userId, item.startTime(), item.endTime(), null)) {
-                throw new ResponseStatusException(HttpStatus.CONFLICT,
-                        "Slot [%s, %s) overlaps with an existing slot".formatted(item.startTime(), item.endTime()));
+                throw new ConflictException("Slot [%s, %s) overlaps with an existing slot".formatted(item.startTime(), item.endTime()));
             }
             newSlots.add(new Slot(calendar, item.startTime(), item.endTime()));
         }
@@ -85,7 +84,7 @@ public class SlotService {
         Slot slot = requireOwned(userId, slotId);
 
         if (slot.hasConfirmedMeeting()) {
-            throw new ResponseStatusException(HttpStatus.CONFLICT, "Cannot modify a slot booked in a confirmed meeting");
+            throw new ConflictException("Cannot modify a slot booked in a confirmed meeting");
         }
 
         boolean timeChanged = request.startTime() != null || request.endTime() != null;
@@ -101,10 +100,10 @@ public class SlotService {
             // Serializes the overlap-check-then-write sequence per user — see
             // CalendarRepository.findByOwnerIdForUpdate.
             calendarRepository.findByOwnerIdForUpdate(userId)
-                    .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Calendar not found for userId=" + userId));
+                    .orElseThrow(() -> new NotFoundException("Calendar not found for userId=" + userId));
 
             if (slotRepository.existsOverlap(userId, newStart, newEnd, slotId)) {
-                throw new ResponseStatusException(HttpStatus.CONFLICT, "Updated slot would overlap with an existing slot");
+                throw new ConflictException("Updated slot would overlap with an existing slot");
             }
 
             slot.reschedule(newStart, newEnd);
@@ -119,7 +118,7 @@ public class SlotService {
     public void delete(Long userId, Long slotId) {
         Slot slot = requireOwned(userId, slotId);
         if (slot.hasConfirmedMeeting()) {
-            throw new ResponseStatusException(HttpStatus.CONFLICT, "Cannot delete a slot booked in a confirmed meeting");
+            throw new ConflictException("Cannot delete a slot booked in a confirmed meeting");
         }
         slotRepository.delete(slot);
     }
@@ -127,26 +126,23 @@ public class SlotService {
     @Transactional(readOnly = true)
     public Slot requireOwned(Long userId, Long slotId) {
         return slotRepository.findByUserIdAndSlotId(userId, slotId)
-                .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND,
-                        "Slot %d not found for userId=%d".formatted(slotId, userId)));
+                .orElseThrow(() -> new NotFoundException("Slot %d not found for userId=%d".formatted(slotId, userId)));
     }
 
     private void validateInterval(SlotCreateItem item) {
         if (item == null || item.startTime() == null || item.endTime() == null) {
-            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Each slot needs both startTime and endTime");
+            throw new InvalidInputException("Each slot needs both startTime and endTime");
         }
         if (!timeGrid.isAligned(item.startTime())) {
-            throw new ResponseStatusException(HttpStatus.BAD_REQUEST,
-                    "startTime %s is not aligned to the %d-minute time grid"
+            throw new InvalidInputException("startTime %s is not aligned to the %d-minute time grid"
                             .formatted(item.startTime(), timeGrid.timeGridMinutes()));
         }
         if (!timeGrid.isAligned(item.endTime())) {
-            throw new ResponseStatusException(HttpStatus.BAD_REQUEST,
-                    "endTime %s is not aligned to the %d-minute time grid"
+            throw new InvalidInputException("endTime %s is not aligned to the %d-minute time grid"
                             .formatted(item.endTime(), timeGrid.timeGridMinutes()));
         }
         if (!item.startTime().isBefore(item.endTime())) {
-            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "startTime must be before endTime");
+            throw new InvalidInputException("startTime must be before endTime");
         }
     }
 }

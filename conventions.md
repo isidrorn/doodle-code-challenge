@@ -57,9 +57,11 @@ config/       configuration properties, seeding, OpenAPI config
 ### Error handling
 
 - All errors are RFC 9457 `ProblemDetail` responses, produced centrally by
-  `GlobalExceptionHandler` (`@RestControllerAdvice`). Handlers and services signal errors by
-  throwing (`ResponseStatusException` or more specific exceptions) — they never build error
-  responses themselves.
+  `GlobalExceptionHandler` (`@RestControllerAdvice`). The service layer throws HTTP-agnostic
+  domain exceptions (`NotFoundException`, `ConflictException`, `InvalidInputException`,
+  `ForbiddenException` — `io.irn.minidoodle.exception`); the advice is the single place that maps
+  each to a status code. No Spring Web type appears below the web layer — services stay reusable
+  behind any delivery mechanism, and the status mapping lives where HTTP lives.
 - Status code discipline:
   - `400` — malformed or invalid input (including out-of-range pagination params: reject, don't
     silently clamp).

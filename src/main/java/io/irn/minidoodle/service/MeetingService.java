@@ -8,6 +8,10 @@ import io.irn.minidoodle.domain.ParticipantRole;
 import io.irn.minidoodle.domain.Slot;
 import io.irn.minidoodle.domain.User;
 import io.irn.minidoodle.domain.Vote;
+import io.irn.minidoodle.exception.ConflictException;
+import io.irn.minidoodle.exception.ForbiddenException;
+import io.irn.minidoodle.exception.InvalidInputException;
+import io.irn.minidoodle.exception.NotFoundException;
 import io.irn.minidoodle.repository.MeetingParticipantRepository;
 import io.irn.minidoodle.repository.MeetingRepository;
 import io.irn.minidoodle.repository.SlotRepository;
@@ -23,10 +27,8 @@ import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import lombok.RequiredArgsConstructor;
-import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
-import org.springframework.web.server.ResponseStatusException;
 
 @Service
 @RequiredArgsConstructor
@@ -56,20 +58,17 @@ public class MeetingService {
         Instant end = request.endTime();
 
         if (!start.isBefore(end)) {
-            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "startTime must be before endTime");
+            throw new InvalidInputException("startTime must be before endTime");
         }
         if (!timeGrid.isAligned(start)) {
-            throw new ResponseStatusException(HttpStatus.BAD_REQUEST,
-                    "startTime %s is not aligned to the %d-minute time grid".formatted(start, timeGrid.timeGridMinutes()));
+            throw new InvalidInputException("startTime %s is not aligned to the %d-minute time grid".formatted(start, timeGrid.timeGridMinutes()));
         }
         if (!timeGrid.isAligned(end)) {
-            throw new ResponseStatusException(HttpStatus.BAD_REQUEST,
-                    "endTime %s is not aligned to the %d-minute time grid".formatted(end, timeGrid.timeGridMinutes()));
+            throw new InvalidInputException("endTime %s is not aligned to the %d-minute time grid".formatted(end, timeGrid.timeGridMinutes()));
         }
 
         User organizer = userRepository.findById(request.organizerUserId())
-                .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND,
-                        "User not found: " + request.organizerUserId()));
+                .orElseThrow(() -> new NotFoundException("User not found: " + request.organizerUserId()));
 
         // A user listed more than once (e.g. also in required/optional, or repeated across both)
         // would otherwise violate MeetingParticipant's (meeting_id, user_id) unique constraint.
@@ -100,7 +99,7 @@ public class MeetingService {
                 continue;
             }
             User user = userRepository.findById(userId)
-                    .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "User not found: " + userId));
+                    .orElseThrow(() -> new NotFoundException("User not found: " + userId));
             users.add(user);
         }
         return users;
@@ -119,29 +118,26 @@ public class MeetingService {
     @Transactional(readOnly = true)
     public List<AvailabilityWindow> availability(List<Long> userIds, Instant from, Instant to) {
         if (!from.isBefore(to)) {
-            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "from must be before to");
+            throw new InvalidInputException("from must be before to");
         }
         if (!timeGrid.isAligned(from)) {
-            throw new ResponseStatusException(HttpStatus.BAD_REQUEST,
-                    "from %s is not aligned to the %d-minute time grid".formatted(from, timeGrid.timeGridMinutes()));
+            throw new InvalidInputException("from %s is not aligned to the %d-minute time grid".formatted(from, timeGrid.timeGridMinutes()));
         }
         if (!timeGrid.isAligned(to)) {
-            throw new ResponseStatusException(HttpStatus.BAD_REQUEST,
-                    "to %s is not aligned to the %d-minute time grid".formatted(to, timeGrid.timeGridMinutes()));
+            throw new InvalidInputException("to %s is not aligned to the %d-minute time grid".formatted(to, timeGrid.timeGridMinutes()));
         }
 
         long stepSeconds = timeGrid.stepSeconds();
         long totalWindows = Duration.between(from, to).toSeconds() / stepSeconds;
         if (totalWindows > MAX_AVAILABILITY_WINDOWS) {
-            throw new ResponseStatusException(HttpStatus.BAD_REQUEST,
-                    "requested range spans %d grid windows, exceeding the maximum of %d — narrow from/to"
+            throw new InvalidInputException("requested range spans %d grid windows, exceeding the maximum of %d — narrow from/to"
                             .formatted(totalWindows, MAX_AVAILABILITY_WINDOWS));
         }
 
         Set<Long> distinctUserIds = new LinkedHashSet<>(userIds);
         for (Long userId : distinctUserIds) {
             if (!userRepository.existsById(userId)) {
-                throw new ResponseStatusException(HttpStatus.NOT_FOUND, "User not found: " + userId);
+                throw new NotFoundException("User not found: " + userId);
             }
         }
 
@@ -169,7 +165,7 @@ public class MeetingService {
     @Transactional(readOnly = true)
     public Meeting findById(Long meetingId) {
         return meetingRepository.findById(meetingId)
-                .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Meeting not found: " + meetingId));
+                .orElseThrow(() -> new NotFoundException("Meeting not found: " + meetingId));
     }
 
     /**
@@ -185,18 +181,17 @@ public class MeetingService {
      */
     public Meeting vote(Long meetingId, Long userId, Vote vote) {
         Meeting meeting = meetingRepository.findById(meetingId)
-                .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Meeting not found: " + meetingId));
+                .orElseThrow(() -> new NotFoundException("Meeting not found: " + meetingId));
 
         userRepository.findById(userId)
-                .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "User not found: " + userId));
+                .orElseThrow(() -> new NotFoundException("User not found: " + userId));
 
         if (!meeting.isProposed()) {
-            throw new ResponseStatusException(HttpStatus.CONFLICT, "Meeting %d is not PROPOSED".formatted(meetingId));
+            throw new ConflictException("Meeting %d is not PROPOSED".formatted(meetingId));
         }
 
         MeetingParticipant participant = meetingParticipantRepository.findByMeetingIdAndUserId(meetingId, userId)
-                .orElseThrow(() -> new ResponseStatusException(HttpStatus.BAD_REQUEST,
-                        "userId=%d is not a participant of meeting %d".formatted(userId, meetingId)));
+                .orElseThrow(() -> new InvalidInputException("userId=%d is not a participant of meeting %d".formatted(userId, meetingId)));
 
         participant.castVote(vote);
 
@@ -250,16 +245,15 @@ public class MeetingService {
 
     public void cancel(Long meetingId, Long userId) {
         Meeting meeting = meetingRepository.findById(meetingId)
-                .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Meeting not found: " + meetingId));
+                .orElseThrow(() -> new NotFoundException("Meeting not found: " + meetingId));
 
         MeetingParticipant caller = meetingParticipantRepository.findByMeetingIdAndUserId(meetingId, userId).orElse(null);
         if (caller == null || !caller.isOrganizer()) {
-            throw new ResponseStatusException(HttpStatus.FORBIDDEN,
-                    "userId=%d is not the organizer of meeting %d".formatted(userId, meetingId));
+            throw new ForbiddenException("userId=%d is not the organizer of meeting %d".formatted(userId, meetingId));
         }
 
         if (meeting.getStatus() == MeetingStatus.CANCELLED) {
-            throw new ResponseStatusException(HttpStatus.CONFLICT, "Meeting %d is already cancelled".formatted(meetingId));
+            throw new ConflictException("Meeting %d is already cancelled".formatted(meetingId));
         }
 
         if (meeting.isConfirmed()) {

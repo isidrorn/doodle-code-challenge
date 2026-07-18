@@ -1,5 +1,10 @@
 package io.irn.minidoodle.web;
 
+import io.irn.minidoodle.exception.ConflictException;
+import io.irn.minidoodle.exception.DomainException;
+import io.irn.minidoodle.exception.ForbiddenException;
+import io.irn.minidoodle.exception.InvalidInputException;
+import io.irn.minidoodle.exception.NotFoundException;
 import java.util.stream.Collectors;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.http.HttpHeaders;
@@ -31,7 +36,36 @@ import org.springframework.web.servlet.mvc.method.annotation.ResponseEntityExcep
 @Slf4j
 public class GlobalExceptionHandler extends ResponseEntityExceptionHandler {
 
-    /** Business-rule failures thrown by the service layer: 400/403/404/409 with a specific reason. */
+    /**
+     * Business-rule failures thrown by the service layer. The services throw HTTP-agnostic
+     * {@link DomainException} subtypes; this advice is the single place that knows which status
+     * each one means — the status mapping is an HTTP concern, so it lives in the web layer.
+     */
+    @ExceptionHandler(NotFoundException.class)
+    ResponseEntity<ProblemDetail> handleNotFound(NotFoundException ex) {
+        return problem(HttpStatus.NOT_FOUND, ex.getMessage());
+    }
+
+    @ExceptionHandler(ConflictException.class)
+    ResponseEntity<ProblemDetail> handleConflict(ConflictException ex) {
+        return problem(HttpStatus.CONFLICT, ex.getMessage());
+    }
+
+    @ExceptionHandler(InvalidInputException.class)
+    ResponseEntity<ProblemDetail> handleInvalidInput(InvalidInputException ex) {
+        return problem(HttpStatus.BAD_REQUEST, ex.getMessage());
+    }
+
+    @ExceptionHandler(ForbiddenException.class)
+    ResponseEntity<ProblemDetail> handleForbidden(ForbiddenException ex) {
+        return problem(HttpStatus.FORBIDDEN, ex.getMessage());
+    }
+
+    /**
+     * Safety net only — application code never throws this anymore (services throw
+     * {@link DomainException} subtypes), but framework code occasionally does, and without an
+     * explicit handler the catch-all below would flatten it to a 500.
+     */
     @ExceptionHandler(ResponseStatusException.class)
     ResponseEntity<ProblemDetail> handleResponseStatus(ResponseStatusException ex) {
         ProblemDetail pd = ProblemDetail.forStatusAndDetail(ex.getStatusCode(), ex.getReason());
@@ -94,9 +128,11 @@ public class GlobalExceptionHandler extends ResponseEntityExceptionHandler {
     @ExceptionHandler(Exception.class)
     ResponseEntity<ProblemDetail> handleGeneric(Exception ex, WebRequest request) {
         log.error("Unhandled exception at {}", request.getDescription(false), ex);
-        ProblemDetail pd = ProblemDetail.forStatusAndDetail(
-                HttpStatus.INTERNAL_SERVER_ERROR, "An unexpected error occurred.");
-        return ResponseEntity.internalServerError().body(pd);
+        return problem(HttpStatus.INTERNAL_SERVER_ERROR, "An unexpected error occurred.");
+    }
+
+    private static ResponseEntity<ProblemDetail> problem(HttpStatus status, String detail) {
+        return ResponseEntity.status(status).body(ProblemDetail.forStatusAndDetail(status, detail));
     }
 
     /**

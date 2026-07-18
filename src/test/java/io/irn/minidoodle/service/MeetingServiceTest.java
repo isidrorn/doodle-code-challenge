@@ -6,6 +6,11 @@ import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.when;
 
 import io.irn.minidoodle.config.TimeGridConfig;
+import io.irn.minidoodle.exception.ConflictException;
+import io.irn.minidoodle.exception.DomainException;
+import io.irn.minidoodle.exception.ForbiddenException;
+import io.irn.minidoodle.exception.InvalidInputException;
+import io.irn.minidoodle.exception.NotFoundException;
 import io.irn.minidoodle.domain.Calendar;
 import io.irn.minidoodle.domain.Meeting;
 import io.irn.minidoodle.domain.MeetingParticipant;
@@ -28,9 +33,7 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
-import org.springframework.http.HttpStatus;
 import org.springframework.test.util.ReflectionTestUtils;
-import org.springframework.web.server.ResponseStatusException;
 
 @ExtendWith(MockitoExtension.class)
 class MeetingServiceTest {
@@ -69,30 +72,30 @@ class MeetingServiceTest {
 
     @Test
     void create_throwsBadRequest_whenStartAfterEnd() {
-        assertStatus(HttpStatus.BAD_REQUEST, () -> meetingService.create(request(T1, T0)));
+        assertThrown(InvalidInputException.class, () -> meetingService.create(request(T1, T0)));
     }
 
     @Test
     void create_throwsBadRequest_whenStartNotGridAligned() {
-        assertStatus(HttpStatus.BAD_REQUEST, () -> meetingService.create(request(T0.plusSeconds(1), T1)));
+        assertThrown(InvalidInputException.class, () -> meetingService.create(request(T0.plusSeconds(1), T1)));
     }
 
     @Test
     void create_throwsBadRequest_whenEndNotGridAligned() {
-        assertStatus(HttpStatus.BAD_REQUEST, () -> meetingService.create(request(T0, T0.plusSeconds(600))));
+        assertThrown(InvalidInputException.class, () -> meetingService.create(request(T0, T0.plusSeconds(600))));
     }
 
     @Test
     void create_throwsNotFound_whenOrganizerMissing() {
         when(userRepository.findById(ORGANIZER_ID)).thenReturn(Optional.empty());
-        assertStatus(HttpStatus.NOT_FOUND, () -> meetingService.create(request(T0, T1)));
+        assertThrown(NotFoundException.class, () -> meetingService.create(request(T0, T1)));
     }
 
     @Test
     void create_throwsNotFound_whenRequiredParticipantMissing() {
         when(userRepository.findById(ORGANIZER_ID)).thenReturn(Optional.of(organizer));
         when(userRepository.findById(REQUIRED_ID)).thenReturn(Optional.empty());
-        assertStatus(HttpStatus.NOT_FOUND, () -> meetingService.create(request(T0, T1)));
+        assertThrown(NotFoundException.class, () -> meetingService.create(request(T0, T1)));
     }
 
     @Test
@@ -131,7 +134,7 @@ class MeetingServiceTest {
     @Test
     void vote_throwsNotFound_whenMeetingMissing() {
         when(meetingRepository.findById(MEETING_ID)).thenReturn(Optional.empty());
-        assertStatus(HttpStatus.NOT_FOUND, () -> meetingService.vote(MEETING_ID, REQUIRED_ID, Vote.YES));
+        assertThrown(NotFoundException.class, () -> meetingService.vote(MEETING_ID, REQUIRED_ID, Vote.YES));
     }
 
     @Test
@@ -140,7 +143,7 @@ class MeetingServiceTest {
         when(meetingRepository.findById(MEETING_ID)).thenReturn(Optional.of(meeting));
         when(userRepository.findById(REQUIRED_ID)).thenReturn(Optional.empty());
 
-        assertStatus(HttpStatus.NOT_FOUND, () -> meetingService.vote(MEETING_ID, REQUIRED_ID, Vote.YES));
+        assertThrown(NotFoundException.class, () -> meetingService.vote(MEETING_ID, REQUIRED_ID, Vote.YES));
     }
 
     @Test
@@ -150,7 +153,7 @@ class MeetingServiceTest {
         when(meetingRepository.findById(MEETING_ID)).thenReturn(Optional.of(meeting));
         when(userRepository.findById(REQUIRED_ID)).thenReturn(Optional.of(required));
 
-        assertStatus(HttpStatus.CONFLICT, () -> meetingService.vote(MEETING_ID, REQUIRED_ID, Vote.YES));
+        assertThrown(ConflictException.class, () -> meetingService.vote(MEETING_ID, REQUIRED_ID, Vote.YES));
     }
 
     @Test
@@ -161,7 +164,7 @@ class MeetingServiceTest {
         when(userRepository.findById(999L)).thenReturn(Optional.of(stranger));
         when(meetingParticipantRepository.findByMeetingIdAndUserId(MEETING_ID, 999L)).thenReturn(Optional.empty());
 
-        assertStatus(HttpStatus.BAD_REQUEST, () -> meetingService.vote(MEETING_ID, 999L, Vote.YES));
+        assertThrown(InvalidInputException.class, () -> meetingService.vote(MEETING_ID, 999L, Vote.YES));
     }
 
     @Test
@@ -255,19 +258,19 @@ class MeetingServiceTest {
 
     @Test
     void availability_throwsBadRequest_whenFromNotBeforeTo() {
-        assertStatus(HttpStatus.BAD_REQUEST,
+        assertThrown(InvalidInputException.class,
                 () -> meetingService.availability(List.of(ORGANIZER_ID), T1, T0));
     }
 
     @Test
     void availability_throwsBadRequest_whenFromNotGridAligned() {
-        assertStatus(HttpStatus.BAD_REQUEST,
+        assertThrown(InvalidInputException.class,
                 () -> meetingService.availability(List.of(ORGANIZER_ID), T0.plusSeconds(1), T1));
     }
 
     @Test
     void availability_throwsBadRequest_whenToNotGridAligned() {
-        assertStatus(HttpStatus.BAD_REQUEST,
+        assertThrown(InvalidInputException.class,
                 () -> meetingService.availability(List.of(ORGANIZER_ID), T0, T0.plusSeconds(600)));
     }
 
@@ -275,14 +278,14 @@ class MeetingServiceTest {
     void availability_throwsBadRequest_whenRangeExceedsMaxWindows() {
         // MAX_AVAILABILITY_WINDOWS is 2_000; 2_001 windows on the 30-minute grid overflows it.
         Instant tooFar = T0.plusSeconds(2_001 * 1800L);
-        assertStatus(HttpStatus.BAD_REQUEST,
+        assertThrown(InvalidInputException.class,
                 () -> meetingService.availability(List.of(ORGANIZER_ID), T0, tooFar));
     }
 
     @Test
     void availability_throwsNotFound_whenUserMissing() {
         when(userRepository.existsById(ORGANIZER_ID)).thenReturn(false);
-        assertStatus(HttpStatus.NOT_FOUND,
+        assertThrown(NotFoundException.class,
                 () -> meetingService.availability(List.of(ORGANIZER_ID), T0, T1));
     }
 
@@ -353,7 +356,7 @@ class MeetingServiceTest {
     @Test
     void cancel_throwsNotFound_whenMeetingMissing() {
         when(meetingRepository.findById(MEETING_ID)).thenReturn(Optional.empty());
-        assertStatus(HttpStatus.NOT_FOUND, () -> meetingService.cancel(MEETING_ID, ORGANIZER_ID));
+        assertThrown(NotFoundException.class, () -> meetingService.cancel(MEETING_ID, ORGANIZER_ID));
     }
 
     @Test
@@ -363,7 +366,7 @@ class MeetingServiceTest {
         when(meetingParticipantRepository.findByMeetingIdAndUserId(MEETING_ID, REQUIRED_ID))
                 .thenReturn(Optional.of(participantFor(meeting, REQUIRED_ID)));
 
-        assertStatus(HttpStatus.FORBIDDEN, () -> meetingService.cancel(MEETING_ID, REQUIRED_ID));
+        assertThrown(ForbiddenException.class, () -> meetingService.cancel(MEETING_ID, REQUIRED_ID));
     }
 
     @Test
@@ -372,7 +375,7 @@ class MeetingServiceTest {
         when(meetingRepository.findById(MEETING_ID)).thenReturn(Optional.of(meeting));
         when(meetingParticipantRepository.findByMeetingIdAndUserId(MEETING_ID, 999L)).thenReturn(Optional.empty());
 
-        assertStatus(HttpStatus.FORBIDDEN, () -> meetingService.cancel(MEETING_ID, 999L));
+        assertThrown(ForbiddenException.class, () -> meetingService.cancel(MEETING_ID, 999L));
     }
 
     @Test
@@ -383,7 +386,7 @@ class MeetingServiceTest {
         when(meetingParticipantRepository.findByMeetingIdAndUserId(MEETING_ID, ORGANIZER_ID))
                 .thenReturn(Optional.of(participantFor(meeting, ORGANIZER_ID)));
 
-        assertStatus(HttpStatus.CONFLICT, () -> meetingService.cancel(MEETING_ID, ORGANIZER_ID));
+        assertThrown(ConflictException.class, () -> meetingService.cancel(MEETING_ID, ORGANIZER_ID));
     }
 
     @Test
@@ -454,11 +457,8 @@ class MeetingServiceTest {
                 List.of(REQUIRED_ID), List.of(OPTIONAL_ID));
     }
 
-    private void assertStatus(HttpStatus expected, ThrowingRunnable action) {
-        assertThatThrownBy(action::run)
-                .isInstanceOf(ResponseStatusException.class)
-                .extracting(e -> ((ResponseStatusException) e).getStatusCode())
-                .isEqualTo(expected);
+    private void assertThrown(Class<? extends DomainException> expected, ThrowingRunnable action) {
+        assertThatThrownBy(action::run).isInstanceOf(expected);
     }
 
     @FunctionalInterface

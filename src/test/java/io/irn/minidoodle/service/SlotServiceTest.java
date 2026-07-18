@@ -8,6 +8,10 @@ import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 import io.irn.minidoodle.config.TimeGridConfig;
+import io.irn.minidoodle.exception.ConflictException;
+import io.irn.minidoodle.exception.DomainException;
+import io.irn.minidoodle.exception.InvalidInputException;
+import io.irn.minidoodle.exception.NotFoundException;
 import io.irn.minidoodle.domain.Calendar;
 import io.irn.minidoodle.domain.Meeting;
 import io.irn.minidoodle.domain.Slot;
@@ -26,8 +30,6 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
-import org.springframework.http.HttpStatus;
-import org.springframework.web.server.ResponseStatusException;
 
 @ExtendWith(MockitoExtension.class)
 class SlotServiceTest {
@@ -54,31 +56,31 @@ class SlotServiceTest {
 
     @Test
     void create_throwsBadRequest_whenStartTimeNotGridAligned() {
-        assertStatus(HttpStatus.BAD_REQUEST,
+        assertThrown(InvalidInputException.class,
                 () -> slotService.create(USER_ID, requestOf(new SlotCreateItem(T0.plusSeconds(1), T1))));
     }
 
     @Test
     void create_throwsBadRequest_whenEndTimeNotGridAligned() {
-        assertStatus(HttpStatus.BAD_REQUEST,
+        assertThrown(InvalidInputException.class,
                 () -> slotService.create(USER_ID, requestOf(new SlotCreateItem(T0, T1.plusSeconds(1)))));
     }
 
     @Test
     void create_throwsBadRequest_whenStartNotBeforeEnd() {
-        assertStatus(HttpStatus.BAD_REQUEST,
+        assertThrown(InvalidInputException.class,
                 () -> slotService.create(USER_ID, requestOf(new SlotCreateItem(T1, T0))));
     }
 
     @Test
     void create_throwsBadRequest_whenTimesMissing() {
-        assertStatus(HttpStatus.BAD_REQUEST,
+        assertThrown(InvalidInputException.class,
                 () -> slotService.create(USER_ID, requestOf(new SlotCreateItem(T0, null))));
     }
 
     @Test
     void create_throwsConflict_whenRequestedSlotsOverlapEachOther() {
-        assertStatus(HttpStatus.CONFLICT,
+        assertThrown(ConflictException.class,
                 () -> slotService.create(USER_ID,
                         requestOf(new SlotCreateItem(T0, T2), new SlotCreateItem(T1, T3))));
     }
@@ -89,7 +91,7 @@ class SlotServiceTest {
         when(calendarRepository.findByOwnerIdForUpdate(USER_ID)).thenReturn(Optional.of(calendar));
         when(slotRepository.existsOverlap(USER_ID, T0, T1, null)).thenReturn(true);
 
-        assertStatus(HttpStatus.CONFLICT,
+        assertThrown(ConflictException.class,
                 () -> slotService.create(USER_ID, requestOf(new SlotCreateItem(T0, T1))));
     }
 
@@ -135,7 +137,7 @@ class SlotServiceTest {
         Slot slot = slotWithConfirmedMeeting();
         when(slotRepository.findByUserIdAndSlotId(USER_ID, SLOT_ID)).thenReturn(Optional.of(slot));
 
-        assertStatus(HttpStatus.CONFLICT,
+        assertThrown(ConflictException.class,
                 () -> slotService.update(USER_ID, SLOT_ID, new SlotUpdateRequest(null, null, null)));
     }
 
@@ -159,7 +161,7 @@ class SlotServiceTest {
         Slot slot = new Slot(T0, T1);
         when(slotRepository.findByUserIdAndSlotId(USER_ID, SLOT_ID)).thenReturn(Optional.of(slot));
 
-        assertStatus(HttpStatus.BAD_REQUEST,
+        assertThrown(InvalidInputException.class,
                 () -> slotService.update(USER_ID, SLOT_ID, new SlotUpdateRequest(T0.plusSeconds(1), null, null)));
     }
 
@@ -168,7 +170,7 @@ class SlotServiceTest {
         Slot slot = new Slot(T0, T1);
         when(slotRepository.findByUserIdAndSlotId(USER_ID, SLOT_ID)).thenReturn(Optional.of(slot));
 
-        assertStatus(HttpStatus.BAD_REQUEST,
+        assertThrown(InvalidInputException.class,
                 () -> slotService.update(USER_ID, SLOT_ID, new SlotUpdateRequest(null, T1.plusSeconds(1), null)));
     }
 
@@ -180,7 +182,7 @@ class SlotServiceTest {
         when(calendarRepository.findByOwnerIdForUpdate(USER_ID)).thenReturn(Optional.of(calendar));
         when(slotRepository.existsOverlap(eq(USER_ID), any(), any(), eq(SLOT_ID))).thenReturn(true);
 
-        assertStatus(HttpStatus.CONFLICT,
+        assertThrown(ConflictException.class,
                 () -> slotService.update(USER_ID, SLOT_ID, new SlotUpdateRequest(T2, null, null)));
     }
 
@@ -224,7 +226,7 @@ class SlotServiceTest {
         Slot slot = slotWithConfirmedMeeting();
         when(slotRepository.findByUserIdAndSlotId(USER_ID, SLOT_ID)).thenReturn(Optional.of(slot));
 
-        assertStatus(HttpStatus.CONFLICT, () -> slotService.delete(USER_ID, SLOT_ID));
+        assertThrown(ConflictException.class, () -> slotService.delete(USER_ID, SLOT_ID));
     }
 
     @Test
@@ -258,11 +260,8 @@ class SlotServiceTest {
         return slot;
     }
 
-    private void assertStatus(HttpStatus expected, ThrowingRunnable action) {
-        assertThatThrownBy(action::run)
-                .isInstanceOf(ResponseStatusException.class)
-                .extracting(e -> ((ResponseStatusException) e).getStatusCode())
-                .isEqualTo(expected);
+    private void assertThrown(Class<? extends DomainException> expected, ThrowingRunnable action) {
+        assertThatThrownBy(action::run).isInstanceOf(expected);
     }
 
     @FunctionalInterface
