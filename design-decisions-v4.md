@@ -6,12 +6,13 @@ A short pass, two independent additions bundled because they were requested toge
 
 ## Pagination on every list/query endpoint
 
-`GET /api/users`, `GET /api/users/{userId}/slots`, and `QUERY /api/users/{userId}/slots` all
-returned unbounded arrays — flagged as a known gap in `spec-review.md` from the start, given the
+`GET /api/users` and `GET /api/users/{userId}/slots` (unfiltered and filtered alike) returned
+unbounded arrays — flagged as a known gap in `spec-review.md` from the start, given the
 brief's own "hundreds of users, thousands of slots" framing. Fixed properly rather than deferred
 further:
 
-- `page`/`size` query params (default `page=0`, `size=20`, max `size=100`) on all three, validated
+- `page`/`size` query params (default `page=0`, `size=20`, max `size=100`) on every list endpoint,
+  validated
   by `RequestValidator.parsePageable` — an out-of-range value 400s rather than silently clamping,
   since it's much more likely a client bug than an intentional "give me everything."
 - Response shape changed from a bare JSON array to an envelope —
@@ -61,7 +62,7 @@ Postgres SQL, and running them against H2 (local dev, and the entire test suite)
 maintenance cost of keeping two SQL dialects of every migration in sync for this project's size.
 
 **A Spring Boot 4 gotcha hit while wiring this up, consistent with a few others this project has
-already run into** (Jackson, `TestRestTemplate` — see `design-decisions-v3.md`): `flyway-core` alone
+already run into** (Jackson, `TestRestTemplate`): `flyway-core` alone
 on the classpath is not enough. Boot 4 modularized Flyway's autoconfiguration out of
 `spring-boot-autoconfigure` into its own `spring-boot-flyway`/`spring-boot-starter-flyway` module —
 without it, `FlywayAutoConfiguration` never activates, migrations silently never run, and Hibernate's
@@ -69,5 +70,5 @@ without it, `FlywayAutoConfiguration` never activates, migrations silently never
 attempt (just `flyway-core` + `flyway-database-postgresql`) failed exactly that way against a fresh
 `docker-compose` Postgres volume; adding `spring-boot-starter-flyway` fixed it, verified by the
 `flyway_schema_history` table showing both migrations applied and every subsequent request working
-end-to-end (pagination, `QUERY` filtering, the full meeting propose → vote → confirm flow) against
+end-to-end (pagination, slot filtering, the full meeting propose → vote → confirm flow) against
 the resulting schema.

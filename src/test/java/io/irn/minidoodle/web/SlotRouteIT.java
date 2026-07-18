@@ -9,7 +9,6 @@ import io.irn.minidoodle.repository.SlotRepository;
 import io.irn.minidoodle.repository.UserRepository;
 import io.irn.minidoodle.web.dto.PageResponse;
 import io.irn.minidoodle.web.dto.SlotBulkCreateRequest;
-import io.irn.minidoodle.web.dto.SlotQueryFilter;
 import io.irn.minidoodle.web.dto.SlotResponse;
 import io.irn.minidoodle.web.dto.SlotUpdateRequest;
 import org.junit.jupiter.api.BeforeEach;
@@ -46,8 +45,6 @@ import static org.assertj.core.api.Assertions.assertThat;
 @AutoConfigureTestRestTemplate
 @ActiveProfiles("test")
 class SlotRouteIT {
-
-    static final HttpMethod QUERY = HttpMethod.valueOf("QUERY");
 
     // 30-minute grid (default scheduling.slot-duration-minutes)
     static final Instant T0 = Instant.parse("2026-06-01T09:00:00Z");
@@ -120,81 +117,51 @@ class SlotRouteIT {
         assertThat(res.getStatusCode()).isEqualTo(HttpStatus.BAD_REQUEST);
     }
 
-    // ── QUERY (filter by body) ────────────────────────────────────────────────
+    // ── GET (list with filter params) ─────────────────────────────────────────
 
     @Test
-    void querySlots_filtersByFreeStatus_returnsMatch() {
-        ResponseEntity<PageResponse<SlotResponse>> res = doQuery(userId, new SlotQueryFilter(SlotStatus.FREE, null, null));
+    void listSlots_filtersByFreeStatus_returnsMatch() {
+        ResponseEntity<PageResponse<SlotResponse>> res = listSlotsFiltered(userId, "?status=FREE");
 
         assertThat(res.getStatusCode()).isEqualTo(HttpStatus.OK);
         assertThat(res.getBody().content()).hasSize(1);
     }
 
     @Test
-    void querySlots_filtersByBusyStatus_returnsEmpty() {
-        ResponseEntity<PageResponse<SlotResponse>> res = doQuery(userId, new SlotQueryFilter(SlotStatus.BUSY, null, null));
+    void listSlots_filtersByBusyStatus_returnsEmpty() {
+        ResponseEntity<PageResponse<SlotResponse>> res = listSlotsFiltered(userId, "?status=BUSY");
 
         assertThat(res.getBody().content()).isEmpty();
     }
 
     @Test
-    void querySlots_filtersByTimeRange_returnsMatch() {
+    void listSlots_filtersByTimeRange_returnsMatch() {
         TestSupport.seedSlot(slotRepository, calendarRepository, userId, T2, T3);  // second slot outside the filter range
 
-        ResponseEntity<PageResponse<SlotResponse>> res = doQuery(userId, new SlotQueryFilter(null, T0, T1));
+        ResponseEntity<PageResponse<SlotResponse>> res = listSlotsFiltered(userId, "?from=" + T0 + "&to=" + T1);
 
         assertThat(res.getBody().content()).hasSize(1);
         assertThat(res.getBody().content().get(0).startTime()).isEqualTo(T0);
     }
 
     /**
-     * The core QUERY gotcha this project exists to demonstrate: some clients don't
-     * send a body at all for a non-standard method. A genuinely empty body must
-     * still be treated as "no filter", not rejected — see SlotHandler.parseFilter.
+     * A malformed filter value must 400, never be silently ignored — an unfiltered result set
+     * with no indication the filter was dropped would be worse than an error.
      */
     @Test
-    void querySlots_withNoBody_treatedAsNoFilter_returnsAllSlots() {
-        ResponseEntity<PageResponse<SlotResponse>> res = restTemplate.exchange(
-                "/api/users/{uid}/slots", QUERY,
-                new HttpEntity<>(jsonHeaders()),
-                new ParameterizedTypeReference<PageResponse<SlotResponse>>() {}, userId);
-
-        assertThat(res.getStatusCode()).isEqualTo(HttpStatus.OK);
-        assertThat(res.getBody().content()).hasSize(1);
-    }
-
-    /**
-     * A *present but malformed* body must 400, not be silently swallowed into "no filter" —
-     * only a genuinely empty/absent body gets that treatment. Regression test for a bug where
-     * SlotHandler.parseFilter caught every exception, including a real parse failure, and
-     * returned all slots unfiltered with no indication anything was wrong with the request.
-     */
-    @Test
-    void querySlots_withMalformedJson_returns400_notAllSlots() {
+    void listSlots_withUnparseableFromDate_returns400_notAllSlots() {
         ResponseEntity<String> res = restTemplate.exchange(
-                "/api/users/{uid}/slots", QUERY,
-                new HttpEntity<>("{not valid json", jsonHeaders()),
-                String.class, userId);
+                "/api/users/{uid}/slots?from=not-a-date", HttpMethod.GET,
+                new HttpEntity<>(jsonHeaders()), String.class, userId);
 
         assertThat(res.getStatusCode()).isEqualTo(HttpStatus.BAD_REQUEST);
     }
 
     @Test
-    void querySlots_withUnparseableFromDate_returns400_notAllSlots() {
+    void listSlots_withInvalidStatusEnum_returns400_notAllSlots() {
         ResponseEntity<String> res = restTemplate.exchange(
-                "/api/users/{uid}/slots", QUERY,
-                new HttpEntity<>("{\"from\":\"not-a-date\"}", jsonHeaders()),
-                String.class, userId);
-
-        assertThat(res.getStatusCode()).isEqualTo(HttpStatus.BAD_REQUEST);
-    }
-
-    @Test
-    void querySlots_withInvalidStatusEnum_returns400_notAllSlots() {
-        ResponseEntity<String> res = restTemplate.exchange(
-                "/api/users/{uid}/slots", QUERY,
-                new HttpEntity<>("{\"status\":\"NOT_A_STATUS\"}", jsonHeaders()),
-                String.class, userId);
+                "/api/users/{uid}/slots?status=NOT_A_STATUS", HttpMethod.GET,
+                new HttpEntity<>(jsonHeaders()), String.class, userId);
 
         assertThat(res.getStatusCode()).isEqualTo(HttpStatus.BAD_REQUEST);
     }
@@ -425,11 +392,10 @@ class SlotRouteIT {
                 new ParameterizedTypeReference<PageResponse<SlotResponse>>() {}, uid);
     }
 
-    private ResponseEntity<PageResponse<SlotResponse>> doQuery(Long uid, SlotQueryFilter filter) {
-        HttpHeaders headers = jsonHeaders();
+    private ResponseEntity<PageResponse<SlotResponse>> listSlotsFiltered(Long uid, String queryString) {
         return restTemplate.exchange(
-                "/api/users/{uid}/slots", QUERY,
-                new HttpEntity<>(filter, headers),
+                "/api/users/{uid}/slots" + queryString, HttpMethod.GET,
+                new HttpEntity<>(jsonHeaders()),
                 new ParameterizedTypeReference<PageResponse<SlotResponse>>() {}, uid);
     }
 

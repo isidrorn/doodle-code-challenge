@@ -37,8 +37,8 @@ public class MeetingService {
     /**
      * Caps how many grid windows a single availability query can walk — this loop is
      * O((to - from) / slotDuration), and an unbounded caller-supplied range would otherwise let
-     * one request drive an arbitrarily large amount of server-side work. Mirrors
-     * RequestValidator's MAX_PAGE_SIZE: reject out-of-range rather than silently truncate.
+     * one request drive an arbitrarily large amount of server-side work. Mirrors the pagination
+     * size cap: reject out-of-range rather than silently truncate.
      */
     private static final long MAX_AVAILABILITY_WINDOWS = 2_000;
 

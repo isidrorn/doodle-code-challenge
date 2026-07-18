@@ -1,7 +1,7 @@
 # API examples — cURL reference
 
 A per-resource, copy-pasteable reference of every route. For a scripted, runnable walkthrough of
-the whole flow (create users, filter slots with `QUERY`, propose/vote/confirm/cancel a meeting)
+the whole flow (create users, filter slots, propose/vote/confirm/cancel a meeting)
 against a live instance, see [`demo.sh`](demo.sh) instead — this file is for browsing and
 copy-pasting one request at a time.
 
@@ -35,9 +35,7 @@ Applies across every route in this API, not just one resource — every `{userId
 `{meetingId}` path segment and every request body is validated before it reaches business logic:
 
 ```bash
-# A path id that isn't a number → 400, not a 500. (This used to 500: Swagger UI's default
-# placeholder for an untyped path parameter is the literal string "string", which used to reach
-# Long.valueOf(...) uncaught. See RequestValidator.parseId / troubleshooting.md.)
+# A path id that isn't a number → 400 with a specific message, not a 500
 curl -s -w "\n%{http_code}\n" "$BASE/api/users/not-a-number"
 
 # Same fix applies to every id-shaped path variable, everywhere it appears
@@ -54,7 +52,7 @@ curl -s -w "\n%{http_code}\n" -X PATCH "$BASE/api/users/1/slots/1" \
   -H "Content-Type: application/json" \
   -d '{"status":"NOT_A_STATUS"}'
 
-# A syntactically valid but nonexistent id is a 404, not a 400 — parseId only rejects
+# A syntactically valid but nonexistent id is a 404, not a 400 — type validation only rejects
 # things that aren't numbers at all, not numbers that don't happen to match a row
 curl -s -w "\n%{http_code}\n" "$BASE/api/users/999999"
 ```
@@ -63,7 +61,7 @@ curl -s -w "\n%{http_code}\n" "$BASE/api/users/999999"
 
 ## Pagination
 
-Every list/query endpoint (`GET /api/users`, `GET`/`QUERY /api/users/{userId}/slots`) is paginated
+Every list endpoint (`GET /api/users`, `GET /api/users/{userId}/slots`) is paginated
 via ordinary `page`/`size` query params — defaults `page=0`, `size=20`, capped at `size=100` — and
 returns an envelope instead of a bare array: `{content, page, size, totalElements, totalPages}`.
 
@@ -90,7 +88,7 @@ curl -s -X POST "$BASE/api/users" \
   -H "Content-Type: application/json" \
   -d '{"name":"Carol","email":"carol@example.com"}' | jq
 
-# Invalid input → 400 with a ProblemDetail body (see RequestValidator)
+# Invalid input → 400 with a ProblemDetail body
 curl -s -w "\n%{http_code}\n" -X POST "$BASE/api/users" \
   -H "Content-Type: application/json" \
   -d '{"name":"","email":"not-an-email"}'
@@ -106,38 +104,20 @@ system-wide `scheduling.slot-duration-minutes`, default 30), computed server-sid
 ```bash
 USER=1   # replace with the actual userId from the seeder log
 
-# List all slots (GET — no filter; paginated, see "Pagination" above)
+# List all slots (no filter; paginated, see "Pagination" above)
 curl -s "$BASE/api/users/$USER/slots" | jq
 
-# ── HTTP QUERY verb — filter by body ──────────────────────────────────────────
-# Documented in Swagger UI too — springdoc-openapi itself can't represent a non-standard HTTP
-# method, so /api-docs is post-processed to expose this as a real OpenAPI 3.2 `query` operation.
-# See query-method.md for the full story (why QUERY, how it's wired, how it got into Swagger UI),
-# query-endpoint.openapi.yaml for a fuller hand-written reference, and design-decisions-v2.md for
-# what was tried first and didn't work.
-# Filter by status
-curl -s -X QUERY "$BASE/api/users/$USER/slots" \
-  -H "Content-Type: application/json" \
-  -H "Accept: application/json" \
-  -d '{"status":"FREE"}' | jq
+# Filter by status — every filter param is optional; absent means "no filter on that dimension"
+curl -s "$BASE/api/users/$USER/slots?status=FREE" | jq
 
 # Filter by time range
-curl -s -X QUERY "$BASE/api/users/$USER/slots" \
-  -H "Content-Type: application/json" \
-  -H "Accept: application/json" \
-  -d '{"from":"2027-01-01T08:00:00Z","to":"2027-01-01T11:00:00Z"}' | jq
+curl -s "$BASE/api/users/$USER/slots?from=2027-01-01T08:00:00Z&to=2027-01-01T11:00:00Z" | jq
 
 # Combined filter
-curl -s -X QUERY "$BASE/api/users/$USER/slots" \
-  -H "Content-Type: application/json" \
-  -H "Accept: application/json" \
-  -d '{"status":"FREE","from":"2027-01-01T08:00:00Z","to":"2027-01-01T12:00:00Z"}' | jq
+curl -s "$BASE/api/users/$USER/slots?status=FREE&from=2027-01-01T08:00:00Z&to=2027-01-01T12:00:00Z" | jq
 
-# No body at all → treated as "no filter", same as GET. This is the core QUERY gotcha this
-# project exists to demonstrate: some clients don't send a body for a non-standard method,
-# so an absent body must NOT be rejected — see SlotHandler.parseFilter.
-curl -s -X QUERY "$BASE/api/users/$USER/slots" -H "Accept: application/json" | jq
-# ──────────────────────────────────────────────────────────────────────────────
+# A malformed filter value → 400, never silently ignored
+curl -s -w "\n%{http_code}\n" "$BASE/api/users/$USER/slots?from=not-a-date"
 
 # Get single slot
 curl -s "$BASE/api/users/$USER/slots/1" | jq
@@ -228,20 +208,15 @@ curl -s -w "\n%{http_code}\n" -X DELETE "$BASE/api/meetings/1" \
   -H "Content-Type: application/json" \
   -d "{\"userId\":$BOB}"
 
-# ── HTTP QUERY verb — find a time that works, instead of already knowing one ───────────────────
-# Every field is required here (unlike the slots QUERY filter) — there's no sensible "empty body"
-# default for "find availability." Returns one entry per slot-grid window in [from,to) where at
-# least one of userIds is FREE; freeUserIds is the subset actually free at that window, not
-# necessarily all of them. See design-decisions-v5.md.
-curl -s -X QUERY "$BASE/api/meetings/availability" \
-  -H "Content-Type: application/json" \
-  -H "Accept: application/json" \
-  -d "{\"userIds\":[$ALICE,$BOB],\"from\":\"2027-01-02T09:00:00Z\",\"to\":\"2027-01-02T10:00:00Z\"}" | jq
+# ── Availability search — find a time that works, instead of already knowing one ──────────────
+# Every parameter is required here (unlike the slot-list filters) — there's no sensible default
+# for "find availability." Returns one entry per slot-grid window in [from,to) where at least one
+# of userIds is FREE; freeUserIds is the subset actually free at that window, not necessarily all
+# of them. See design-decisions-v5.md.
+curl -s "$BASE/api/meetings/availability?userIds=$ALICE,$BOB&from=2027-01-02T09:00:00Z&to=2027-01-02T10:00:00Z" | jq
 
 # from not aligned to the slot grid → 400
-curl -s -w "\n%{http_code}\n" -X QUERY "$BASE/api/meetings/availability" \
-  -H "Content-Type: application/json" \
-  -d "{\"userIds\":[$ALICE],\"from\":\"2027-01-02T09:00:07Z\",\"to\":\"2027-01-02T10:00:00Z\"}"
+curl -s -w "\n%{http_code}\n" "$BASE/api/meetings/availability?userIds=$ALICE&from=2027-01-02T09:00:07Z&to=2027-01-02T10:00:00Z"
 # ──────────────────────────────────────────────────────────────────────────────────────────────
 ```
 

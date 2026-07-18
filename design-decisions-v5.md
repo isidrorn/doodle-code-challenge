@@ -7,7 +7,7 @@ Don't merge them, separate passes.
 
 ## The gap this closes
 
-Every other piece of "mini Doodle" was covered: slots, meetings, propose/vote/confirm, `QUERY`-based
+Every other piece of "mini Doodle" was covered: slots, meetings, propose/vote/confirm, slot
 filtering. What wasn't there was the one thing real Doodle is actually known for — suggesting a time
 that works, instead of requiring the organizer to already know one. Proposing a meeting
 (`POST /api/meetings`) always required a specific `startTime`/`endTime` chosen in advance; nothing
@@ -15,8 +15,8 @@ answered "when, across these N people, is everyone (or anyone) actually free?"
 
 ## What was added
 
-`QUERY /api/meetings/availability` — body: `{userIds, from, to}`. For every slot-grid window in
-`[from, to)`, returns which of the requested users have a `FREE` slot there:
+`GET /api/meetings/availability` — parameters: `userIds`, `from`, `to`. For every slot-grid window
+in `[from, to)`, returns which of the requested users have a `FREE` slot there:
 
 ```json
 [
@@ -56,12 +56,10 @@ per-slot again.
   request drive an arbitrarily large amount of server-side work. Same reasoning, same shape, as
   `RequestValidator`'s `MAX_PAGE_SIZE` (design-decisions-v4.md): reject out-of-range with a clear
   400 rather than silently truncating the response.
-- **Every field in `AvailabilityQuery` is required**, and the handler goes through the normal
-  `RequestValidator.parseAndValidate` path — unlike `SlotHandler.parseFilter`'s "empty body means no
-  filter" convention for `QUERY /api/users/{userId}/slots`. That convention exists because an absent
-  filter has an obvious, useful default (list everything); there's no equivalent default for "find
-  availability" — an empty body can't mean anything except a client mistake, so it 400s like any
-  other malformed request body.
+- **Every parameter is required** — unlike the slot-list filters, where each one is optional. That
+  asymmetry is deliberate: an absent slot filter has an obvious, useful default (list everything);
+  there's no equivalent default for "find availability" — a request without users or a range can't
+  mean anything except a client mistake, so it 400s like any other invalid request.
 
 Verified live before writing tests (both the happy path and every validation error), then covered:
 `MeetingServiceTest` (grid alignment, range-multiple check, the window cap, user-not-found, the

@@ -12,7 +12,6 @@ import io.irn.minidoodle.repository.MeetingParticipantRepository;
 import io.irn.minidoodle.repository.MeetingRepository;
 import io.irn.minidoodle.repository.SlotRepository;
 import io.irn.minidoodle.repository.UserRepository;
-import io.irn.minidoodle.web.dto.AvailabilityQuery;
 import io.irn.minidoodle.web.dto.AvailabilityWindow;
 import io.irn.minidoodle.web.dto.MeetingCancelRequest;
 import io.irn.minidoodle.web.dto.MeetingCreateRequest;
@@ -43,8 +42,6 @@ import org.springframework.test.context.ActiveProfiles;
 @AutoConfigureTestRestTemplate
 @ActiveProfiles("test")
 class MeetingRouteIT {
-
-    static final HttpMethod QUERY = HttpMethod.valueOf("QUERY");
 
     // 60-minute window == 2 slots on the default 30-minute grid
     static final Instant T0  = Instant.parse("2026-06-01T09:00:00Z");
@@ -313,40 +310,41 @@ class MeetingRouteIT {
 
     @Test
     void availability_returns400_whenFromNotGridAligned() {
-        ResponseEntity<String> res = restTemplate.exchange(
-                "/api/meetings/availability", QUERY,
-                new HttpEntity<>(new AvailabilityQuery(List.of(aliceId), T0.plusSeconds(60), T1), jsonHeaders()),
-                String.class);
+        ResponseEntity<String> res = restTemplate.getForEntity(
+                availabilityUri(List.of(aliceId), T0.plusSeconds(60).toString(), T1.toString()), String.class);
 
         assertThat(res.getStatusCode()).isEqualTo(HttpStatus.BAD_REQUEST);
     }
 
     @Test
     void availability_returns400_whenUserIdsEmpty() {
-        ResponseEntity<String> res = restTemplate.exchange(
-                "/api/meetings/availability", QUERY,
-                new HttpEntity<>(new AvailabilityQuery(List.of(), T0, T1), jsonHeaders()),
-                String.class);
+        ResponseEntity<String> res = restTemplate.getForEntity(
+                availabilityUri(List.of(), T0.toString(), T1.toString()), String.class);
 
         assertThat(res.getStatusCode()).isEqualTo(HttpStatus.BAD_REQUEST);
     }
 
     @Test
     void availability_returns404_whenUserMissing() {
-        ResponseEntity<String> res = restTemplate.exchange(
-                "/api/meetings/availability", QUERY,
-                new HttpEntity<>(new AvailabilityQuery(List.of(9999L), T0, T1), jsonHeaders()),
-                String.class);
+        ResponseEntity<String> res = restTemplate.getForEntity(
+                availabilityUri(List.of(9999L), T0.toString(), T1.toString()), String.class);
 
         assertThat(res.getStatusCode()).isEqualTo(HttpStatus.NOT_FOUND);
     }
 
     @Test
-    void availability_returns400_whenBodyIsMalformedJson() {
-        ResponseEntity<String> res = restTemplate.exchange(
-                "/api/meetings/availability", QUERY,
-                new HttpEntity<>("{not valid json", jsonHeaders()),
-                String.class);
+    void availability_returns400_whenFromUnparseable() {
+        ResponseEntity<String> res = restTemplate.getForEntity(
+                availabilityUri(List.of(aliceId), "not-a-date", T1.toString()), String.class);
+
+        assertThat(res.getStatusCode()).isEqualTo(HttpStatus.BAD_REQUEST);
+    }
+
+    /** All three parameters are required — unlike the slot-list filters, there is no default. */
+    @Test
+    void availability_returns400_whenRequiredParamMissing() {
+        ResponseEntity<String> res = restTemplate.getForEntity(
+                "/api/meetings/availability?from={from}&to={to}", String.class, T0, T1);
 
         assertThat(res.getStatusCode()).isEqualTo(HttpStatus.BAD_REQUEST);
     }
@@ -354,17 +352,13 @@ class MeetingRouteIT {
     // ── helpers ───────────────────────────────────────────────────────────────
 
     private ResponseEntity<AvailabilityWindow[]> doAvailabilityQuery(List<Long> userIds, Instant from, Instant to) {
-        return restTemplate.exchange(
-                "/api/meetings/availability", QUERY,
-                new HttpEntity<>(new AvailabilityQuery(userIds, from, to), jsonHeaders()),
-                AvailabilityWindow[].class);
+        return restTemplate.getForEntity(
+                availabilityUri(userIds, from.toString(), to.toString()), AvailabilityWindow[].class);
     }
 
-    private HttpHeaders jsonHeaders() {
-        HttpHeaders h = new HttpHeaders();
-        h.setContentType(MediaType.APPLICATION_JSON);
-        h.setAccept(List.of(MediaType.APPLICATION_JSON));
-        return h;
+    private String availabilityUri(List<Long> userIds, String from, String to) {
+        String ids = String.join(",", userIds.stream().map(String::valueOf).toList());
+        return "/api/meetings/availability?userIds=%s&from=%s&to=%s".formatted(ids, from, to);
     }
 
     private ResponseEntity<MeetingResponse> createMeeting(List<Long> required, List<Long> optional) {

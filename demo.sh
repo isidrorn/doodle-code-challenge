@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 #
 # End-to-end walkthrough of the mini-Doodle API against a live instance: creates its
-# own users and slots (never assumes DataSeeder's ids), then exercises QUERY filtering,
+# own users and slots (never assumes DataSeeder's ids), then exercises slot filtering,
 # validation, bulk slot creation, and the full meeting propose → vote → confirm/cancel
 # lifecycle. Safe to run repeatedly — each run creates fresh demo users.
 #
@@ -98,8 +98,6 @@ section "Validation: blank name + malformed email → 400"
 call POST /api/users '{"name":"","email":"not-an-email"}'
 
 section "Validation: non-numeric path id → 400, not 500"
-echo "(this used to 500 — Swagger UI's default placeholder for an untyped path parameter is the"
-echo " literal string 'string', which used to reach Long.valueOf(...) uncaught. See troubleshooting.md.)"
 call GET /api/users/not-a-number
 
 section "Validation: malformed JSON body → 400, not 500"
@@ -134,15 +132,14 @@ call GET "/api/users/$ALICE_ID/slots?page=0&size=1"
 section "Validation: size over the max → 400, not silently clamped"
 call GET "/api/users/$ALICE_ID/slots?size=1000"
 
-section "QUERY: filter by status=FREE"
-call QUERY "/api/users/$ALICE_ID/slots" '{"status":"FREE"}'
+section "Filter Alice's slots by status=FREE"
+call GET "/api/users/$ALICE_ID/slots?status=FREE"
 
-section "QUERY: filter by time range"
-call QUERY "/api/users/$ALICE_ID/slots" "{\"from\":\"$S1_START\",\"to\":\"$S2_START\"}"
+section "Filter Alice's slots by time range"
+call GET "/api/users/$ALICE_ID/slots?from=$S1_START&to=$S2_START"
 
-section "QUERY: no body at all → treated as 'no filter', same as GET"
-echo "(this is the core QUERY gotcha this project exists to demonstrate — see SlotHandler.parseFilter)"
-call QUERY "/api/users/$ALICE_ID/slots"
+section "Validation: malformed filter value → 400, never silently ignored"
+call GET "/api/users/$ALICE_ID/slots?from=not-a-date"
 
 section "Validation: startTime not aligned to the slot grid → 400"
 call POST "/api/users/$ALICE_ID/slots" "{\"startTimes\":[\"$(iso_from_epoch $((GRID_START + 60)))\"]}"
@@ -155,14 +152,14 @@ call PATCH "/api/users/$ALICE_ID/slots/$ALICE_SLOT1" '{"status":"NOT_A_STATUS"}'
 
 # ── 3. meetings ───────────────────────────────────────────────────────────────
 
-section "QUERY: find a time that works — Alice, Bob, and Carol's availability"
+section "Availability: find a time that works — Alice, Bob, and Carol"
 echo "(Carol has no slots at all, so she never shows up in freeUserIds — this is the one piece of"
 echo " core Doodle behavior — suggest a time, don't require one already picked — the rest of the"
 echo " API didn't cover on its own. See design-decisions-v5.md.)"
-call QUERY /api/meetings/availability "{\"userIds\":[$ALICE_ID,$BOB_ID,$CAROL_ID],\"from\":\"$MEETING_START\",\"to\":\"$MEETING_END\"}"
+call GET "/api/meetings/availability?userIds=$ALICE_ID,$BOB_ID,$CAROL_ID&from=$MEETING_START&to=$MEETING_END"
 
 section "Validation: availability query with an unaligned 'from' → 400, not 500"
-call QUERY /api/meetings/availability "{\"userIds\":[$ALICE_ID],\"from\":\"$(iso_from_epoch $((GRID_START + 60)))\",\"to\":\"$MEETING_END\"}"
+call GET "/api/meetings/availability?userIds=$ALICE_ID&from=$(iso_from_epoch $((GRID_START + 60)))&to=$MEETING_END"
 
 section "Validation: propose a meeting with a blank title → 400"
 call POST /api/meetings "{\"title\":\"\",\"organizerUserId\":$ALICE_ID,\"startTime\":\"$MEETING_START\",\"endTime\":\"$MEETING_END\"}"

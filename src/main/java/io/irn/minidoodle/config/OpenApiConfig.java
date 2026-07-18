@@ -16,11 +16,9 @@ public class OpenApiConfig {
                         .title("Mini Doodle — Scheduling API")
                         .version("0.1.0")
                         .description("""
-                                Meeting scheduling platform showcasing the experimental HTTP QUERY verb \
-                                (draft-ietf-httpbis-safe-method-w-body) via Spring WebMvc.fn functional routes.
-                                
-                                The QUERY verb is safe + idempotent but allows a structured request body, \
-                                making it ideal for slot availability queries with complex filters.
+                                Mini Doodle — a meeting scheduling platform. Users own calendars of \
+                                fixed-duration slots; meetings are proposed, voted on by participants, \
+                                and confirmed once every required participant agrees.
                                 """)
                         .contact(new Contact().name("Isidro Rebollo").url("https://github.com/isidrorn")));
     }

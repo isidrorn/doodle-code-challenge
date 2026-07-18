@@ -4,11 +4,11 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## What this is
 
-Two things in one repo: a playground for the HTTP `QUERY` method
-(`draft-ietf-httpbis-safe-method-w-body`) and a "mini Doodle" meeting-scheduling API that gives
-`QUERY` something real to filter. Spring Boot 4.1, Java 21. `spring.application.name` /
-Maven artifactId / base package are all `minidoodle` / `io.irn` / `io.irn.minidoodle` — the app
-identity is the scheduling platform; the `QUERY` demo is the reason it's built the way it is.
+A "mini Doodle" meeting-scheduling API — the submission for a backend take-home challenge.
+Spring Boot 4.1, Java 21. `spring.application.name` / Maven artifactId / base package are
+`minidoodle` / `io.irn` / `io.irn.minidoodle`. How we work (architecture, conventions, principles)
+is written up declaratively in [`conventions.md`](conventions.md) — read it before making changes;
+if a change alters a practice it describes, update it in the same commit.
 
 ## Build & test commands
 
@@ -33,7 +33,7 @@ mvn test -Dtest=*Test,*IT
 
 # Single test class / single method
 mvn test -Dtest=SlotServiceTest
-mvn test -Dtest=SlotRouteIT#querySlots_filtersByFreeStatus_returnsMatch
+mvn test -Dtest=SlotRouteIT#listSlots_filtersByFreeStatus_returnsMatch
 
 # Run the app
 mvn spring-boot:run -Dspring-boot.run.profiles=local   # H2, no Docker
@@ -42,9 +42,9 @@ docker-compose up                                       # PostgreSQL
 
 App starts on `http://localhost:8080`; `DataSeeder` seeds two users (Alice, Bob) with a few
 grid-aligned slots each, in the same time window — check the startup logs for their generated
-`userId`s. Swagger UI at `/swagger-ui.html`,
-Prometheus metrics at `/actuator/prometheus`. See `api-examples.md` for a full set of `curl`
-examples, or run `./demo.sh` for a scripted end-to-end walkthrough against a live instance.
+`userId`s. Swagger UI at `/swagger-ui.html`, Prometheus metrics at `/actuator/prometheus`. See
+`api-examples.md` for a full set of `curl` examples, or run `./demo.sh` for a scripted end-to-end
+walkthrough against a live instance.
 
 ## Architecture
 
@@ -52,61 +52,42 @@ Layering, strictly one-directional — the web layer never touches a repository 
 through a service:
 
 ```
-web/          HandlerFunction + RouterFunction (WebMvc.fn) — no @RestController for the domain API
+web/          @RestController classes (UserController, SlotController, MeetingController)
   dto/        request/response records
   mapper/     entity → DTO mapper components
 service/      @Service @Transactional — the only layer with business logic
 repository/   JpaRepository — no access from web/
 domain/       JPA entities — no dependency on any other layer
-config/       DataSeeder, OpenApiConfig
+config/       DataSeeder, OpenApiConfig, SlotDurationConfig
 ```
 
-`GlobalExceptionHandler` (`@RestControllerAdvice`) exists only as a fallback for any future
-`@RestController`; it does not fire for the domain API described below.
+### Error handling
 
-### Why functional routes instead of `@RestController`
-
-`HttpMethod.valueOf("QUERY")` is an open value object in Spring 6/7, so it dispatches without
-touching `RequestMappingHandlerMapping`. `@RequestMapping`, however, is closed to the `RequestMethod`
-enum and can't express `QUERY` at all. Every route is therefore declared as a `RouterFunction` +
-`HandlerFunction` in `SlotRouterConfig`, not as annotated controller methods:
-
-```java
-route()
-    .GET(SLOTS,  accept(APPLICATION_JSON), slots::listAll)
-    .route(method(QUERY).and(path(SLOTS)).and(accept(APPLICATION_JSON)), slots::query)
-    .POST(SLOTS, contentType(APPLICATION_JSON), slots::create)
-    .build()
-    .filter(routerExceptionFilter::filter);
-```
-
-Consequence: `@RestControllerAdvice` does **not** intercept exceptions from a `HandlerFunction` (it
-only targets `HandlerMethod`/`@Controller`). Error handling instead goes through
-`RouterExceptionFilter`, a `HandlerFilterFunction` chained onto the `RouterFunction`, mapping
-`ResponseStatusException` → `ProblemDetail`, `ObjectOptimisticLockingFailureException` → 409, and
-anything else → 500.
-
-Gotcha specific to `QUERY`: some HTTP clients (including `TestRestTemplate` used in this project's
-own tests) don't set a `Content-Length` header for a body sent with a non-standard method. Never
-gate body parsing on `Content-Length` being present — attempt the parse and treat a genuinely
-empty/absent body as "no filter" via the parse failure itself (see `SlotHandler.parseFilter`).
+All errors flow through `GlobalExceptionHandler` (`@RestControllerAdvice`), which **extends
+`ResponseEntityExceptionHandler` deliberately** — the class has a catch-all
+`@ExceptionHandler(Exception.class)` → 500, and without the parent's inherited, more-specific
+handlers, that catch-all would swallow Spring MVC's own exceptions
+(`HttpRequestMethodNotSupportedException`, `HandlerMethodValidationException`,
+`MissingServletRequestParameterException`, ...) and turn canonical 405s/400s into 500s. The
+overrides in the class only sharpen detail messages; don't add a new `@ExceptionHandler` for an
+exception type the parent already handles (same-type handlers in one advice are an ambiguity error
+at startup) — override the parent's protected method instead. Service-layer code signals errors by
+throwing `ResponseStatusException` with the right status; it never builds responses.
 
 ### Validation
 
-Functional routes have no equivalent of `@Valid` on a `@RequestBody` parameter —
-`ServerRequest.body(Class)` never invokes a `Validator`, so the `@NotBlank`/`@NotNull`/`@Email`/
-`@NotEmpty` annotations on `UserCreateRequest`, `SlotBulkCreateRequest`, `MeetingCreateRequest`,
-`VoteRequest`, and `MeetingCancelRequest` would silently never be checked, even with
-`spring-boot-starter-validation` on the classpath. Every handler that parses one of those DTOs must
-go through
-[`RequestValidator`](src/main/java/io/irn/minidoodle/web/RequestValidator.java)
-(`requestValidator.parseAndValidate(request, X.class)`) instead of calling `request.body(X.class)`
-directly — it runs the autoconfigured `jakarta.validation.Validator` explicitly and throws
-`ResponseStatusException(BAD_REQUEST, ...)` on violations. A new validated DTO/handler that skips
-this and calls `request.body(...)` directly will compile fine and silently accept invalid input.
-(`SlotUpdateRequest` is the one DTO with no bean-validation constraints at all — every field is
-optional — so its handler calls `request.body(...)` directly; grid-alignment/overlap checks happen
-as ordinary business-rule validation inside `SlotService` instead.)
+- **Structural validation** lives on the DTO records (`@NotBlank`/`@NotNull`/`@Email`/`@NotEmpty`)
+  and is triggered by `@Valid @RequestBody` on the controller method. (`SlotUpdateRequest` is the
+  one DTO with no constraints at all — every field optional — so its controller method takes it
+  without `@Valid`.)
+- **Controller method parameters** carry constraints directly (`@Min(0) int page`,
+  `@Max(100) int size`, `@NotEmpty List<Long> userIds`) — Spring's built-in method validation
+  raises `HandlerMethodValidationException` → 400, no `@Validated` needed. Out-of-range pagination
+  is rejected with 400, never silently clamped.
+- **Business-rule validation** (grid alignment, overlap, state-machine legality) lives in the
+  services, throwing `ResponseStatusException`.
+- Path variables are typed (`@PathVariable Long userId`) — malformed values become
+  `MethodArgumentTypeMismatchException` → 400 via `GlobalExceptionHandler`.
 
 ### Domain
 
@@ -127,7 +108,7 @@ User 1──1 Calendar 1──N Slot N──M Meeting 1──N MeetingParticipan
   and meeting creation) must satisfy `epochSecond % (slotDurationMinutes * 60) == 0`, checked in
   `SlotService` and `MeetingService`.
 - `Slot` carries `@Version` for optimistic locking; a losing concurrent writer gets mapped to 409 by
-  `RouterExceptionFilter`.
+  `GlobalExceptionHandler`.
 - `Slot ─ Meeting` is `@ManyToMany` via the `slot_meeting` join table (owned by `Meeting`). A slot
   can sit in several `PROPOSED` meetings at once but at most one `CONFIRMED` one — not a DB
   constraint, enforced in code by `MeetingService.confirm()` only ever booking slots it already
@@ -161,43 +142,40 @@ User 1──1 Calendar 1──N Slot N──M Meeting 1──N MeetingParticipan
   rolls back — no partial-success/207 handling needed.
 - `spring.jpa.open-in-view: false` is set deliberately. Any repository method whose result gets
   read after its `@Transactional` service method returns (e.g. a mapper touching a lazy
-  `@ManyToMany`/`@OneToMany`) must eagerly fetch what it needs — see `SlotRepository.search`/
-  `findByUserIdAndSlotId` (`@EntityGraph(attributePaths = "meetings")`, since `SlotMapper` reads
-  `slot.getMeetings()`) and `MeetingRepository.findById`
-  (`@EntityGraph(attributePaths = {"participants", "participants.user"})`, since `MeetingMapper`
-  reads `participant.getUser().getName()`). Don't "fix" a `LazyInitializationException` by
-  re-enabling open-in-view.
+  `@ManyToMany`/`@OneToMany`) must eagerly fetch what it needs — see
+  `SlotRepository.findByIdInWithMeetings`/`findByUserIdAndSlotId`
+  (`@EntityGraph(attributePaths = "meetings")`, since `SlotMapper` reads `slot.getMeetings()`) and
+  `MeetingRepository.findById` (`@EntityGraph(attributePaths = {"participants",
+  "participants.user"})`, since `MeetingMapper` reads `participant.getUser().getName()`). Don't
+  "fix" a `LazyInitializationException` by re-enabling open-in-view.
 - **`@EntityGraph(attributePaths = ...)` is a JPA *fetch graph*, not just an eager-fetch hint: any
   association NOT listed in it gets demoted to `LAZY`, even if its own mapping is `EAGER` by
   default.** This is why `MeetingRepository.findById()`'s graph is `{"participants",
-  "participants.user"}` and *not* `"slots"` — `MeetingMapper` no longer reads `slots` at all
-  (`MeetingResponse` doesn't expose them; see the API routes section), so adding it back would just
-  be dead eager-fetching. `MeetingService.confirm()`/`cancel()` still mutate `meeting.getSlots()`,
-  but always from inside the active transaction, where lazy loading works regardless of what's in
-  the graph — the graph only matters for what gets read *after* the transaction ends.
+  "participants.user"}` and *not* `"slots"` — `MeetingMapper` doesn't read `slots` at all
+  (`MeetingResponse` doesn't expose them). `MeetingService.confirm()`/`cancel()` still mutate
+  `meeting.getSlots()`, but always from inside the active transaction, where lazy loading works
+  regardless of what's in the graph — the graph only matters for what gets read *after* the
+  transaction ends.
 - **A JPQL bind parameter used only in a bare `(:param is null or ...)` check breaks on real
   Postgres, but not on H2.** Postgres's extended query protocol resolves a parameter's type at
   parse time from its surrounding SQL; a standalone `? IS NULL` with no comparison/cast gives it
   nothing to infer from, and it fails with `could not determine data type of parameter $n`. H2
   doesn't enforce this, so the whole test suite (H2-backed) passes while the exact same query 500s
   against `docker-compose`'s Postgres. Fix is an explicit `cast(:param as <type>)` in the null-check
-  branch — see `SlotRepository.search` and `existsOverlap` for the pattern. Any new optional-filter
-  query with this shape needs the same treatment, and should be smoke-tested against
+  branch — see `SlotRepository.searchIds` and `existsOverlap` for the pattern. Any new
+  optional-filter query with this shape needs the same treatment, and should be smoke-tested against
   `docker-compose up`, not just `mvn test`. (`findFreeSlotsCovering` has no optional/nullable
   parameters, so it isn't at risk of this — but it was still smoke-tested against Postgres directly,
   see `design-decisions-v2.md`.)
 
 ### API routes
 
-All declared in `SlotRouterConfig`:
-
 ```
 GET    /api/users                                             list users (paginated)
 GET    /api/users/{userId}                                    get user
 POST   /api/users                                              create user (also creates their Calendar)
 
-GET    /api/users/{userId}/slots                              list all slots (paginated)
-QUERY  /api/users/{userId}/slots                              filter slots (status, from, to in body; paginated)
+GET    /api/users/{userId}/slots                              list slots (optional status/from/to filters; paginated)
 POST   /api/users/{userId}/slots                              bulk-create slots (startTimes[] in body)
 GET    /api/users/{userId}/slots/{slotId}                     get slot
 PATCH  /api/users/{userId}/slots/{slotId}                     update slot (startTime, status)
@@ -205,43 +183,42 @@ DELETE /api/users/{userId}/slots/{slotId}                     delete slot
 
 POST   /api/meetings                                          propose a meeting (PROPOSED)
 GET    /api/meetings/{meetingId}                               get meeting
-DELETE /api/meetings/{meetingId}                               cancel meeting (organizer only; body: {userId})
+DELETE /api/meetings/{meetingId}                              cancel meeting (organizer only; body: {userId})
 POST   /api/meetings/{meetingId}/participants/{userId}/vote   cast a vote (body: {vote})
-QUERY  /api/meetings/availability                              find free windows across users (userIds, from, to in body)
+GET    /api/meetings/availability                              find free windows across users (userIds, from, to params)
 ```
 
-`MeetingHandler.availability`/`MeetingService.availability` are the one route where a `QUERY` body's
-fields are all *required* — it goes through `RequestValidator.parseAndValidate`, not
-`SlotHandler.parseFilter`'s "empty body means no filter" convention, since there's no sensible
-default for "find availability" the way an absent slot filter sensibly means "list everything." See
-design-decisions-v5.md.
+The slot-list filter params are all optional (absent = "no filter on that dimension"); the
+availability params are all required — there's no sensible default for an availability search.
+`GET /api/meetings/availability` coexists with `GET /api/meetings/{meetingId}` because Spring's
+path matching always prefers the literal segment over the template. See design-decisions-v5.md.
 
 ### Pagination
 
-Every list/query endpoint (`UserHandler.listAll`, `SlotHandler.listAll`/`query`) is paginated via
-`RequestValidator.parsePageable(request, sort)` — `page`/`size` query params, defaulting to
-`page=0`/`size=20`, size capped at 100 (400 if out of range, not silently clamped) — and returns
+Every list endpoint (`UserController.listAll`, `SlotController.list`) is paginated via
+`page`/`size` query params validated with `@Min`/`@Max` constraints — defaults `page=0`/`size=20`,
+size capped at 100 (400 if out of range, not silently clamped) — and returns
 [`PageResponse<T>`](src/main/java/io/irn/minidoodle/web/dto/PageResponse.java) instead of a bare
 array.
 
-**`SlotRepository.search()` doesn't exist anymore — it's `searchIds()` + `findByIdInWithMeetings()`,
-deliberately two queries.** Pagination (LIMIT/OFFSET) and a `@ManyToMany` fetch join
-(`@EntityGraph(attributePaths = "meetings")`, needed because `SlotMapper` reads
-`slot.getMeetings()` with `open-in-view: false`) don't combine safely: with a collection fetch-joined
-in the same query, Hibernate can't apply LIMIT/OFFSET in SQL (a fetch join can multiply rows), so it
-silently paginates the *entire* result set in memory instead — exactly defeating the point of
-paginating a "thousands of slots" endpoint. `searchIds()` selects just the page's ids with real
-SQL-level pagination (no fetch join, so it's safe); `findByIdInWithMeetings()` loads those specific
-entities with `meetings` eagerly fetched (safe here — no LIMIT/OFFSET on this query, the id list
-already fixes which rows come back). `SlotService.query()` composes the two and wraps the result in
-a `PageImpl` using the first query's total count. Any new paginated query needing an eager collection
-needs the same two-step shape — don't add `@EntityGraph` directly to a `Pageable`-accepting query.
+**Slot search is `searchIds()` + `findByIdInWithMeetings()`, deliberately two queries.**
+Pagination (LIMIT/OFFSET) and a `@ManyToMany` fetch join (`@EntityGraph(attributePaths =
+"meetings")`, needed because `SlotMapper` reads `slot.getMeetings()` with `open-in-view: false`)
+don't combine safely: with a collection fetch-joined in the same query, Hibernate can't apply
+LIMIT/OFFSET in SQL (a fetch join can multiply rows), so it silently paginates the *entire* result
+set in memory instead — exactly defeating the point of paginating a "thousands of slots" endpoint.
+`searchIds()` selects just the page's ids with real SQL-level pagination (no fetch join, so it's
+safe); `findByIdInWithMeetings()` loads those specific entities with `meetings` eagerly fetched
+(safe here — no LIMIT/OFFSET on this query, the id list already fixes which rows come back).
+`SlotService.query()` composes the two and wraps the result in a `PageImpl` using the first query's
+total count. Any new paginated query needing an eager collection needs the same two-step shape —
+don't add `@EntityGraph` directly to a `Pageable`-accepting query.
 
 ### Tests
 
 | Layer | Classes | Notes |
 |---|---|---|
-| Unit (Mockito, no Spring context) | `SlotServiceTest`, `MeetingServiceTest`, `RequestValidatorTest` | |
+| Unit (Mockito, no Spring context) | `SlotServiceTest`, `MeetingServiceTest` | |
 | Repository (`@DataJpaTest`) | `SlotRepositoryTest`, `CalendarRepositoryTest` | |
 | Integration (`@SpringBootTest`, `RANDOM_PORT`, H2) | `UserRouteIT`, `SlotRouteIT`, `MeetingRouteIT` | real socket via `TestRestTemplate`, not MockMvc |
 
@@ -267,7 +244,7 @@ few times in a row, since a broken lock would only show up as occasional extra `
 - `@MockBean`/`@SpyBean` are gone in Spring Boot 4 — use plain `@Mock` +
   `@ExtendWith(MockitoExtension.class)` for unit tests.
 - `DataSeeder` is excluded under the `test` profile (`@Profile("!test")`).
-- 123 tests total as of the cross-participant availability pass (design-decisions-v5.md).
+- 113 tests total as of the `@RestController` conversion (design-decisions-v6.md).
 
 ### Schema management: Flyway (docker-compose/Postgres only) vs. Hibernate auto-DDL (local/test)
 
@@ -282,55 +259,29 @@ startup if the migration and the entity mapping disagree). See design-decisions-
 `flyway-core` alone isn't enough to make Flyway's autoconfiguration activate on Spring Boot 4 — you
 need `spring-boot-starter-flyway` too.
 
-## Docs layout: README.md vs. query-method.md
+## Docs: conventions vs. decision logs
 
-`README.md` is written for a technical reviewer evaluating this as a take-home submission — it stays
-focused on the scheduling app itself (domain, API, run/consume/test instructions) and only points at
-`QUERY` in passing. [`query-method.md`](query-method.md) is the front door for everything specific to
-the HTTP `QUERY` method: why it's used, how it's routed, the `Content-Length` gotcha, and a pointer
-into the `/api-docs`/Swagger UI saga below. When adding anything QUERY-specific, put the durable
-explanation in `query-method.md` (or the decision logs it points to), not in `README.md` — keep
-README's QUERY footprint to the short pointer it already has.
-
-## Prior spec-compliance review and design decision logs
-
-Five files are **historical records**, not current TODO lists — don't re-fix anything they describe
-as already fixed, and don't merge their content, they document five separate passes:
-
-- [`spec-review.md`](spec-review.md): a pass that checked the *original* single-slot-conversion
-  meeting model against `coding-challenge.md`, found four issues (dead bean validation, a TOCTOU
-  race in slot creation, meetings not exposing participants, an O(n) collection load on every slot
-  create), and fixed all four. Still worth reading before touching `SlotService`,
-  `CalendarRepository`, or the `web/dto` validation wiring — it explains *why* those specific shapes
-  exist (the locking pattern, the `Slot(Calendar, Instant, Instant)` constructor, etc.).
-- [`design-decisions-v2.md`](design-decisions-v2.md): the later refactor to the current
-  propose/vote/confirm meeting model (`MeetingParticipant`, `SlotDurationConfig`, bulk slot
-  creation). Read it before touching `MeetingService.vote()`/`confirm()` — it documents an actual
-  contradiction in the brief this design came from (whether a participant without free slots should
-  block confirmation with a 409, or be silently skipped) and which behavior was implemented and why.
-  It also covers the `/api-docs`/Swagger UI story for the `QUERY` route (the "Why QUERY itself has
-  no live `/api-docs` entry" section) — springdoc/swagger-core's Java model has no way to represent
-  a `query` operation, but `OpenApiQueryOperationFilter` post-processes the served JSON directly to
-  expose it as a real OpenAPI 3.2 operation anyway, since this project's actual bundled Swagger UI
-  (5.32.2) already ships frontend support for it. Read that section (and
-  [`troubleshooting.md`](troubleshooting.md)) before touching `OpenApiQuerySupportConfig` /
-  `OpenApiQueryOperationFilter` — it explains exactly what was tried and ruled out first, including
-  a specific externally-proposed approach that turned out not to work.
-- [`design-decisions-v3.md`](design-decisions-v3.md): the package/app rename
-  (`dev.isidro.queryverb` → `io.irn.minidoodle`, app name → `minidoodle`) and the input-validation
-  hardening that followed it — every path variable (`userId`/`slotId`/`meetingId`) now goes through
-  `RequestValidator.parseId()` instead of a bare `Long.valueOf(pathVariable(...))`, and malformed/
-  mistyped request bodies are mapped to 400 instead of falling through to a generic 500. Read it
-  before adding a new handler with a path variable or reaching for `Long.valueOf(request
-  .pathVariable(...))` directly — that's exactly the pattern this pass removed everywhere else.
-- [`design-decisions-v4.md`](design-decisions-v4.md): pagination on every list/query endpoint (see
-  the "Pagination" section above for the `searchIds()`/`findByIdInWithMeetings()` two-query shape)
-  and Flyway for the docker-compose/Postgres profile (see "Schema management" above). Read it before
-  changing `PageResponse`/`RequestValidator.parsePageable`, or before adding a migration.
-- [`design-decisions-v5.md`](design-decisions-v5.md): `QUERY /api/meetings/availability` —
-  cross-participant free-window search, added to close the one piece of core Doodle behavior
-  (suggesting a time that works, rather than requiring one already chosen) the rest of the API
-  didn't cover. Read it before touching `MeetingService.availability()` — it explains why the
-  implementation reuses `SlotRepository.findFreeSlotsCovering` per user instead of a new query, and
-  why grid-aligned, fixed-duration slots make that a plain set-membership walk rather than general
-  interval-intersection math.
+- [`conventions.md`](conventions.md) — normative "how we do things." Keep it in sync with reality:
+  a change that alters a practice it describes updates it in the same commit.
+- [`README.md`](README.md) — written for a technical reviewer evaluating this as a take-home
+  submission: domain, API, run/consume/test instructions, known limitations.
+- Six files are **historical records**, not current TODO lists — don't re-fix anything they
+  describe as already fixed, and don't merge them; they document six separate passes:
+  - [`spec-review.md`](spec-review.md) (v1): spec-compliance pass on the original single-slot
+    meeting model — dead bean validation, the TOCTOU race and the calendar-level lock that fixed
+    it, an O(n) collection load on every slot create.
+  - [`design-decisions-v2.md`](design-decisions-v2.md): the propose/vote/confirm meeting-model
+    refactor — read before touching `MeetingService.vote()`/`confirm()`; it documents a real
+    contradiction in the brief and which behavior won.
+  - [`design-decisions-v3.md`](design-decisions-v3.md): input-validation hardening — bad-typed path
+    variables and malformed bodies 400 (with specific messages) instead of 500.
+  - [`design-decisions-v4.md`](design-decisions-v4.md): pagination (the two-query shape above) and
+    Flyway for the Postgres profile.
+  - [`design-decisions-v5.md`](design-decisions-v5.md): the cross-participant availability search —
+    read before touching `MeetingService.availability()`; it explains the per-user reuse of
+    `findFreeSlotsCovering` and why grid-aligned fixed-duration slots reduce it to set membership.
+  - [`design-decisions-v6.md`](design-decisions-v6.md): the conversion from functional routes to
+    `@RestController` — which hand-rolled mechanisms were deleted and what replaced each, plus the
+    `ResponseEntityExceptionHandler` wiring rationale. The v1–v5 logs reference the pre-v6 web
+    machinery (`RequestValidator`, `RouterExceptionFilter`, handlers) in their historical context;
+    that's intentional, don't "fix" them.

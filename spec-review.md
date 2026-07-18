@@ -17,7 +17,7 @@ The implementation already covered the required functionality:
   calendar, slots convert to meetings"; `Calendar` correctly never appears as a REST resource.
 - Slot CRUD (create/modify/delete, mark busy/free) and meeting scheduling (title/description,
   slot→meeting conversion) were implemented.
-- `QUERY` with `{status, from, to}` in the body satisfied "querying free or busy slots ... for a
+- Slot filtering by `{status, from, to}` satisfied "querying free or busy slots ... for a
   selected time frame."
 - `docker-compose up` worked end-to-end (Postgres + app, multi-stage Dockerfile, healthcheck-gated
   startup) — satisfying "runnable locally using docker-compose."
@@ -128,7 +128,6 @@ all verified green, plus 5 repeated runs of the concurrency test specifically to
 | The overlap-check race fix had no test proving the lock actually serializes writers | `SlotRouteIT.createSlot_concurrentOverlappingRequests_onlyOneSucceeds` (8-thread race, see above) |
 | New `userId` field was untouched by any assertion | Added assertions in `SlotRouteIT` (list/get) and `MeetingRouteIT` (schedule response) |
 | `SlotService.update()`'s `BAD_REQUEST` (start≥end) and `CONFLICT` (overlap) branches were never exercised by any test, unit or IT — pre-existing gap, unrelated to the fixes above | `SlotServiceTest.update_throwsBadRequest_whenStartAfterEnd`, `update_throwsConflict_whenOverlapExists` · `SlotRouteIT.patchSlot_returns409_whenRescheduleOverlapsAnotherSlot` |
-| The QUERY-with-no-body → "no filter" fallback (`SlotHandler.parseFilter`'s catch block) — the exact quirk this whole repo exists to demonstrate — was never tested with a genuinely empty body; every existing QUERY test sent a `SlotQueryFilter` object, not an absent one | `SlotRouteIT.querySlots_withNoBody_treatedAsNoFilter_returnsAllSlots` |
 
 ## Discussed, deliberately not changed
 

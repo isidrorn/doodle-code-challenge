@@ -5,12 +5,6 @@ calendar, propose meetings against other users, and a meeting confirms once ever
 participant votes yes — booking each participant's free slots automatically. Built with Spring Boot
 4.1 and Java 21.
 
-This repo also happens to demonstrate the HTTP `QUERY` method on one route (filtering slots by a
-structured body instead of query-string parameters) — that's a self-contained side quest with its
-own story worth reading, but it's not the point of the exercise, so it's kept out of this file. See
-[`query-method.md`](query-method.md) if you're curious how `QUERY` is routed, and what it took to get
-it documented in Swagger UI.
-
 ## What it does
 
 - **Time slot management** — create slots with a system-wide, configurable duration
@@ -20,9 +14,9 @@ it documented in Swagger UI.
   confirms and books each participant's free slots for the window automatically.
 - **Calendar** is a domain concept only — it's never exposed as its own REST resource; slots are
   addressed through `/api/users/{userId}/slots`.
-- **Querying availability** — filter a user's slots by status and/or time range via `QUERY` (or list
-  them all via plain `GET`), or find windows where several users are simultaneously free via
-  `QUERY /api/meetings/availability`.
+- **Querying availability** — filter a user's slots by status and/or time range (optional query
+  parameters on the slot list endpoint), or find windows where several users are simultaneously
+  free via `GET /api/meetings/availability`.
 - Designed with "hundreds of users, thousands of slots" in mind: an index on `(calendar_id,
   start_time)`, row-level locking sized to avoid serializing unrelated writes (see below), and a
   concurrency test that actually proves it rather than just asserting it in a docstring.
@@ -70,20 +64,19 @@ User  1 ──── 1  Calendar  1 ──── N  Slot  N ──── M  Meet
 
 ## API routes
 
-All routes are declared in
-[`SlotRouterConfig`](src/main/java/io/irn/minidoodle/web/SlotRouterConfig.java) as functional
-routes (`WebMvc.fn`) rather than `@RestController` methods — the one route using `QUERY`
-(`HttpMethod.valueOf("QUERY")`) can't be expressed through `@RequestMapping`, which is closed to a
-fixed enum of methods, so the whole API is declared consistently the same way. See
-[`query-method.md`](query-method.md) for the full reasoning.
+One `@RestController` per aggregate —
+[`UserController`](src/main/java/io/irn/minidoodle/web/UserController.java),
+[`SlotController`](src/main/java/io/irn/minidoodle/web/SlotController.java),
+[`MeetingController`](src/main/java/io/irn/minidoodle/web/MeetingController.java) — with all
+error responses mapped centrally to RFC 9457 `ProblemDetail` by
+[`GlobalExceptionHandler`](src/main/java/io/irn/minidoodle/web/GlobalExceptionHandler.java).
 
 ```
 GET    /api/users                                  → list users (paginated)
 GET    /api/users/{userId}                         → get user
 POST   /api/users                                  → create user (also creates their calendar)
 
-GET    /api/users/{userId}/slots                   → list all slots (paginated)
-QUERY  /api/users/{userId}/slots                   → filter slots (status, from, to in body; paginated)
+GET    /api/users/{userId}/slots                   → list slots (optional status/from/to filters; paginated)
 POST   /api/users/{userId}/slots                   → bulk-create slots (startTimes[] in body)
 GET    /api/users/{userId}/slots/{slotId}          → get slot
 PATCH  /api/users/{userId}/slots/{slotId}          → update slot (startTime, status)
@@ -93,7 +86,7 @@ POST   /api/meetings                                         → propose a meeti
 GET    /api/meetings/{meetingId}                              → get meeting
 DELETE /api/meetings/{meetingId}                              → cancel meeting (organizer only)
 POST   /api/meetings/{meetingId}/participants/{userId}/vote  → cast a vote
-QUERY  /api/meetings/availability                             → find free windows across users (userIds, from, to in body)
+GET    /api/meetings/availability                             → find free windows across users (userIds, from, to params)
 ```
 
 Every path variable and request body is validated before it reaches business logic — a bad-typed id
@@ -127,12 +120,11 @@ slots each, in the same time window — check the logs for their generated `user
 ## Consume
 
 - [`api-examples.md`](api-examples.md) — a full set of copy-pasteable `curl` examples covering
-  users, slots (bulk create, all `QUERY` filter variants, the overlap-conflict case), input
-  validation, and the full meeting propose → vote → confirm/cancel flow.
+  users, slots (bulk create, all filter variants, the overlap-conflict case), input validation, and
+  the full meeting propose → vote → confirm/cancel flow.
 - [`demo.sh`](demo.sh) — a runnable, self-contained walkthrough of the same flow end-to-end against
   a live instance (`./demo.sh`, requires `curl` + `jq`); prints every request and response as it goes.
-- Swagger UI at `/swagger-ui.html` documents all 13 routes, including `QUERY` — see
-  [`query-method.md`](query-method.md) for how a non-standard HTTP method ended up documented there.
+- Swagger UI at `/swagger-ui.html` documents all routes.
 - Metrics: Prometheus-formatted metrics (including request latency percentiles) at
   `/actuator/prometheus`; health at `/actuator/health`.
 
@@ -140,10 +132,8 @@ slots each, in the same time window — check the logs for their generated `user
 # List all slots (paginated — defaults to page=0&size=20)
 curl http://localhost:8080/api/users/1/slots
 
-# QUERY: filter by status and/or time range, second page of 10
-curl -X QUERY "http://localhost:8080/api/users/1/slots?page=1&size=10" \
-  -H "Content-Type: application/json" \
-  -d '{"status":"FREE"}'
+# Filter by status and/or time range, second page of 10
+curl "http://localhost:8080/api/users/1/slots?status=FREE&page=1&size=10"
 
 # Bulk-create slots — endTime is always startTime + the system's slot duration
 curl -X POST http://localhost:8080/api/users/1/slots \
@@ -151,9 +141,9 @@ curl -X POST http://localhost:8080/api/users/1/slots \
   -d '{"startTimes":["2027-01-01T09:00:00Z","2027-01-01T09:30:00Z"]}'
 ```
 
-`SlotQueryFilter` fields (`status`, `from`, `to`) are all optional — an empty/absent body is a valid
-QUERY meaning "no filter." `page`/`size` are ordinary query-string params, independent of the filter
-body — a transport concern, not part of the filter.
+The filter params (`status`, `from`, `to`) are all optional — with none present the endpoint simply
+lists everything. A malformed filter value (bad date, unknown status) is a 400, never silently
+ignored.
 
 ## Tests
 
@@ -168,11 +158,11 @@ mvn test -Dtest=*Test,*IT
 
 | Layer | Classes |
 |---|---|
-| Unit (Mockito, no Spring context) | `SlotServiceTest`, `MeetingServiceTest`, `RequestValidatorTest` |
+| Unit (Mockito, no Spring context) | `SlotServiceTest`, `MeetingServiceTest` |
 | Repository (`@DataJpaTest`) | `SlotRepositoryTest`, `CalendarRepositoryTest` |
 | Integration (`@SpringBootTest`, `RANDOM_PORT`, H2) | `UserRouteIT`, `SlotRouteIT`, `MeetingRouteIT` |
 
-123 tests total. Integration tests share seeding/cleanup helpers from
+113 tests total. Integration tests share seeding/cleanup helpers from
 [`TestSupport`](src/test/java/io/irn/minidoodle/TestSupport.java) rather than a common base
 class — each IT class carries its own `@SpringBootTest`/`@AutoConfigureTestRestTemplate` setup.
 
@@ -182,7 +172,7 @@ race over real HTTP to bulk-create the exact same slot, synchronized with a `Cou
 asserting exactly one `201` and seven `409`s. It's what actually proves the `PESSIMISTIC_WRITE`
 locking in `SlotService` works, rather than just compiling.
 
-The full flow (bulk create, `QUERY` filtering, and propose → vote → confirm → cancel) is also
+The full flow (bulk create, slot filtering, and propose → vote → confirm → cancel) is also
 smoke-tested against a real `docker-compose` Postgres instance, not just H2 — see
 [`design-decisions-v2.md`](design-decisions-v2.md) for why that matters for this codebase
 specifically (H2 and Postgres disagree on how they type-check certain bind parameters).
@@ -203,8 +193,8 @@ was flagged until [`design-decisions-v5.md`](design-decisions-v5.md) did.)
 
 ## Design decisions & how this was validated
 
-Three documents record how this implementation evolved and why, each covering a separate pass —
-they intentionally aren't merged into one:
+A set of decision logs records how this implementation evolved and why, each covering a separate
+pass — they intentionally aren't merged into one:
 
 - [`spec-review.md`](spec-review.md) — the original spec-compliance pass against the take-home
   brief: dead bean validation, a TOCTOU race in slot creation, meetings not exposing participants,
@@ -220,10 +210,17 @@ they intentionally aren't merged into one:
   why it needed a two-query approach, not just an `@EntityGraph` on a `Pageable` query) and Flyway
   for the docker-compose/Postgres profile, with migrations reconstructed from the actual schema
   history rather than a single flattened snapshot.
-- [`design-decisions-v5.md`](design-decisions-v5.md) — `QUERY /api/meetings/availability`: the one
-  piece of core Doodle behavior (suggest a time that works, instead of requiring one already picked)
-  that was otherwise missing, built by reusing an existing per-user free-slot query across multiple
-  users instead of adding new domain state.
+- [`design-decisions-v5.md`](design-decisions-v5.md) — the cross-participant availability search
+  (`GET /api/meetings/availability`): the one piece of core Doodle behavior (suggest a time that
+  works, instead of requiring one already picked) that was otherwise missing, built by reusing an
+  existing per-user free-slot query across multiple users instead of adding new domain state.
+- [`design-decisions-v6.md`](design-decisions-v6.md) — the conversion of the web layer from
+  WebMvc.fn functional routes to standard `@RestController` classes, deleting the hand-rolled
+  validation/exception-handling infrastructure the functional style had required, with the API
+  contract held fixed by the integration tests.
+
+How we work — architecture, conventions, and the principles behind all of the above — is written up
+declaratively in [`conventions.md`](conventions.md).
 
 (The original take-home prompt isn't included in this repo, since take-home exercises are typically
 not meant to be republished — its requirements are summarized in `spec-review.md`.)
