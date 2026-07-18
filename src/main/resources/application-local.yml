@@ -11,3 +11,8 @@ spring:
   h2:
     console:
       enabled: true
+  flyway:
+    # Flyway's migrations (db/migration) are hand-written Postgres SQL for the docker-compose
+    # profile; local dev keeps the fast Hibernate-generated H2 schema instead. See
+    # design-decisions-v4.md.
+    enabled: false

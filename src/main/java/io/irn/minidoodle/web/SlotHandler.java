@@ -1,11 +1,14 @@
 package io.irn.minidoodle.web;
 
 import io.irn.minidoodle.service.SlotService;
+import io.irn.minidoodle.web.dto.PageResponse;
 import io.irn.minidoodle.web.dto.SlotBulkCreateRequest;
 import io.irn.minidoodle.web.dto.SlotQueryFilter;
 import io.irn.minidoodle.web.dto.SlotUpdateRequest;
 import io.irn.minidoodle.web.mapper.SlotMapper;
 import lombok.RequiredArgsConstructor;
+import org.springframework.data.domain.Pageable;
+import org.springframework.data.domain.Sort;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.MediaType;
 import org.springframework.stereotype.Component;
@@ -30,22 +33,23 @@ public class SlotHandler {
 
     public ServerResponse listAll(ServerRequest request) throws Exception {
         Long userId = userId(request);
-        var body = slotService.query(userId, SlotQueryFilter.empty())
-                .stream().map(slotMapper::toResponse).toList();
-        return ok(body);
+        Pageable pageable = pageable(request);
+        var page = slotService.query(userId, SlotQueryFilter.empty(), pageable).map(slotMapper::toResponse);
+        return ok(PageResponse.from(page));
     }
 
     /**
      * HTTP QUERY: safe + idempotent read with a structured filter in the body.
      * Semantically equivalent to a GET with query params, but without URI length limits
-     * and with a typed, self-documenting payload.
+     * and with a typed, self-documenting payload. Pagination (page/size) travels as ordinary
+     * query-string params regardless — it's a transport concern, not part of the filter body.
      */
     public ServerResponse query(ServerRequest request) throws Exception {
         Long userId = userId(request);
         SlotQueryFilter filter = parseFilter(request);
-        var body = slotService.query(userId, filter)
-                .stream().map(slotMapper::toResponse).toList();
-        return ok(body);
+        Pageable pageable = pageable(request);
+        var page = slotService.query(userId, filter, pageable).map(slotMapper::toResponse);
+        return ok(PageResponse.from(page));
     }
 
     /** Bulk-creates every requested slot in one transaction; see SlotService.create. */
@@ -71,6 +75,10 @@ public class SlotHandler {
 
     private Long userId(ServerRequest req) {
         return requestValidator.parseId(req, "userId");
+    }
+
+    private Pageable pageable(ServerRequest req) {
+        return requestValidator.parsePageable(req, Sort.by(Sort.Direction.ASC, "startTime"));
     }
 
     private Long slotId(ServerRequest req) {

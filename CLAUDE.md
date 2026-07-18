@@ -192,12 +192,12 @@ User 1──1 Calendar 1──N Slot N──M Meeting 1──N MeetingParticipan
 All declared in `SlotRouterConfig`:
 
 ```
-GET    /api/users                                             list users
+GET    /api/users                                             list users (paginated)
 GET    /api/users/{userId}                                    get user
 POST   /api/users                                              create user (also creates their Calendar)
 
-GET    /api/users/{userId}/slots                              list all slots
-QUERY  /api/users/{userId}/slots                              filter slots (status, from, to in body)
+GET    /api/users/{userId}/slots                              list all slots (paginated)
+QUERY  /api/users/{userId}/slots                              filter slots (status, from, to in body; paginated)
 POST   /api/users/{userId}/slots                              bulk-create slots (startTimes[] in body)
 GET    /api/users/{userId}/slots/{slotId}                     get slot
 PATCH  /api/users/{userId}/slots/{slotId}                     update slot (startTime, status)
@@ -208,6 +208,27 @@ GET    /api/meetings/{meetingId}                               get meeting
 DELETE /api/meetings/{meetingId}                               cancel meeting (organizer only; body: {userId})
 POST   /api/meetings/{meetingId}/participants/{userId}/vote   cast a vote (body: {vote})
 ```
+
+### Pagination
+
+Every list/query endpoint (`UserHandler.listAll`, `SlotHandler.listAll`/`query`) is paginated via
+`RequestValidator.parsePageable(request, sort)` — `page`/`size` query params, defaulting to
+`page=0`/`size=20`, size capped at 100 (400 if out of range, not silently clamped) — and returns
+[`PageResponse<T>`](src/main/java/io/irn/minidoodle/web/dto/PageResponse.java) instead of a bare
+array.
+
+**`SlotRepository.search()` doesn't exist anymore — it's `searchIds()` + `findByIdInWithMeetings()`,
+deliberately two queries.** Pagination (LIMIT/OFFSET) and a `@ManyToMany` fetch join
+(`@EntityGraph(attributePaths = "meetings")`, needed because `SlotMapper` reads
+`slot.getMeetings()` with `open-in-view: false`) don't combine safely: with a collection fetch-joined
+in the same query, Hibernate can't apply LIMIT/OFFSET in SQL (a fetch join can multiply rows), so it
+silently paginates the *entire* result set in memory instead — exactly defeating the point of
+paginating a "thousands of slots" endpoint. `searchIds()` selects just the page's ids with real
+SQL-level pagination (no fetch join, so it's safe); `findByIdInWithMeetings()` loads those specific
+entities with `meetings` eagerly fetched (safe here — no LIMIT/OFFSET on this query, the id list
+already fixes which rows come back). `SlotService.query()` composes the two and wraps the result in
+a `PageImpl` using the first query's total count. Any new paginated query needing an eager collection
+needs the same two-step shape — don't add `@EntityGraph` directly to a `Pageable`-accepting query.
 
 ### Tests
 
@@ -239,6 +260,20 @@ few times in a row, since a broken lock would only show up as occasional extra `
 - `@MockBean`/`@SpyBean` are gone in Spring Boot 4 — use plain `@Mock` +
   `@ExtendWith(MockitoExtension.class)` for unit tests.
 - `DataSeeder` is excluded under the `test` profile (`@Profile("!test")`).
+- 109 tests total as of the pagination + Flyway pass (design-decisions-v4.md).
+
+### Schema management: Flyway (docker-compose/Postgres only) vs. Hibernate auto-DDL (local/test)
+
+`application.yml` (default profile, used by `docker-compose`) sets `hibernate.ddl-auto: validate`
+and `spring.flyway.enabled: true` — migrations in `src/main/resources/db/migration` own the schema;
+Hibernate only checks its entity mappings match. `application-local.yml` and
+`application-test.yml` both set `spring.flyway.enabled: false` and keep `ddl-auto: create-drop` —
+the migrations are Postgres SQL and aren't run against H2. If you add or change a JPA mapping that
+affects the schema, add a new `V{n}__description.sql` migration for the Postgres profile — `mvn
+test`/H2 won't catch a mismatch, only `docker-compose up` (Hibernate's `validate` fails fast at
+startup if the migration and the entity mapping disagree). See design-decisions-v4.md for why
+`flyway-core` alone isn't enough to make Flyway's autoconfiguration activate on Spring Boot 4 — you
+need `spring-boot-starter-flyway` too.
 
 ## Docs layout: README.md vs. query-method.md
 
@@ -252,8 +287,8 @@ README's QUERY footprint to the short pointer it already has.
 
 ## Prior spec-compliance review and design decision logs
 
-Three files are **historical records**, not current TODO lists — don't re-fix anything they describe
-as already fixed, and don't merge their content, they document three separate passes:
+Four files are **historical records**, not current TODO lists — don't re-fix anything they describe
+as already fixed, and don't merge their content, they document four separate passes:
 
 - [`spec-review.md`](spec-review.md): a pass that checked the *original* single-slot-conversion
   meeting model against `coding-challenge.md`, found four issues (dead bean validation, a TOCTOU
@@ -281,3 +316,7 @@ as already fixed, and don't merge their content, they document three separate pa
   mistyped request bodies are mapped to 400 instead of falling through to a generic 500. Read it
   before adding a new handler with a path variable or reaching for `Long.valueOf(request
   .pathVariable(...))` directly — that's exactly the pattern this pass removed everywhere else.
+- [`design-decisions-v4.md`](design-decisions-v4.md): pagination on every list/query endpoint (see
+  the "Pagination" section above for the `searchIds()`/`findByIdInWithMeetings()` two-query shape)
+  and Flyway for the docker-compose/Postgres profile (see "Schema management" above). Read it before
+  changing `PageResponse`/`RequestValidator.parsePageable`, or before adding a migration.

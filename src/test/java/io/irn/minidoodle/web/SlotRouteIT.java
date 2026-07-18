@@ -7,6 +7,7 @@ import io.irn.minidoodle.repository.MeetingParticipantRepository;
 import io.irn.minidoodle.repository.MeetingRepository;
 import io.irn.minidoodle.repository.SlotRepository;
 import io.irn.minidoodle.repository.UserRepository;
+import io.irn.minidoodle.web.dto.PageResponse;
 import io.irn.minidoodle.web.dto.SlotBulkCreateRequest;
 import io.irn.minidoodle.web.dto.SlotQueryFilter;
 import io.irn.minidoodle.web.dto.SlotResponse;
@@ -18,6 +19,7 @@ import org.springframework.boot.resttestclient.TestRestTemplate;
 import org.springframework.boot.resttestclient.autoconfigure.AutoConfigureTestRestTemplate;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.boot.test.context.SpringBootTest.WebEnvironment;
+import org.springframework.core.ParameterizedTypeReference;
 import org.springframework.http.HttpEntity;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.HttpMethod;
@@ -74,40 +76,75 @@ class SlotRouteIT {
 
     @Test
     void listSlots_returns200_withSeededSlot() {
-        ResponseEntity<SlotResponse[]> res = restTemplate.getForEntity(
-                "/api/users/{uid}/slots", SlotResponse[].class, userId);
+        ResponseEntity<PageResponse<SlotResponse>> res = listSlots(userId);
 
         assertThat(res.getStatusCode()).isEqualTo(HttpStatus.OK);
-        assertThat(res.getBody()).hasSize(1);
-        assertThat(res.getBody()[0].status()).isEqualTo(SlotStatus.FREE);
-        assertThat(res.getBody()[0].meetingIds()).isEmpty();
+        assertThat(res.getBody().content()).hasSize(1);
+        assertThat(res.getBody().content().get(0).status()).isEqualTo(SlotStatus.FREE);
+        assertThat(res.getBody().content().get(0).meetingIds()).isEmpty();
+        assertThat(res.getBody().totalElements()).isEqualTo(1);
+    }
+
+    @Test
+    void listSlots_respectsPageAndSizeParams() {
+        // 1 slot already seeded in @BeforeEach; add 4 more so 5 total spans multiple pages of 2
+        for (int i = 1; i <= 4; i++) {
+            TestSupport.seedSlot(slotRepository, calendarRepository, userId,
+                    T2.plusSeconds(i * 1800L), T2.plusSeconds((i + 1) * 1800L));
+        }
+
+        ResponseEntity<PageResponse<SlotResponse>> page0 = restTemplate.exchange(
+                "/api/users/{uid}/slots?page=0&size=2", HttpMethod.GET, new HttpEntity<>(jsonHeaders()),
+                new ParameterizedTypeReference<PageResponse<SlotResponse>>() {}, userId);
+
+        assertThat(page0.getBody().content()).hasSize(2);
+        assertThat(page0.getBody().totalElements()).isEqualTo(5);
+        assertThat(page0.getBody().totalPages()).isEqualTo(3);
+    }
+
+    @Test
+    void listSlots_returns400_whenSizeExceedsMax() {
+        ResponseEntity<String> res = restTemplate.exchange(
+                "/api/users/{uid}/slots?size=101", HttpMethod.GET, new HttpEntity<>(jsonHeaders()),
+                String.class, userId);
+
+        assertThat(res.getStatusCode()).isEqualTo(HttpStatus.BAD_REQUEST);
+    }
+
+    @Test
+    void listSlots_returns400_whenPageNegative() {
+        ResponseEntity<String> res = restTemplate.exchange(
+                "/api/users/{uid}/slots?page=-1", HttpMethod.GET, new HttpEntity<>(jsonHeaders()),
+                String.class, userId);
+
+        assertThat(res.getStatusCode()).isEqualTo(HttpStatus.BAD_REQUEST);
     }
 
     // ── QUERY (filter by body) ────────────────────────────────────────────────
 
     @Test
     void querySlots_filtersByFreeStatus_returnsMatch() {
-        ResponseEntity<SlotResponse[]> res = doQuery(userId, new SlotQueryFilter(SlotStatus.FREE, null, null));
+        ResponseEntity<PageResponse<SlotResponse>> res = doQuery(userId, new SlotQueryFilter(SlotStatus.FREE, null, null));
 
         assertThat(res.getStatusCode()).isEqualTo(HttpStatus.OK);
-        assertThat(res.getBody()).hasSize(1);
+        assertThat(res.getBody().content()).hasSize(1);
     }
 
     @Test
     void querySlots_filtersByBusyStatus_returnsEmpty() {
-        ResponseEntity<SlotResponse[]> res = doQuery(userId, new SlotQueryFilter(SlotStatus.BUSY, null, null));
+        ResponseEntity<PageResponse<SlotResponse>> res = doQuery(userId, new SlotQueryFilter(SlotStatus.BUSY, null, null));
 
-        assertThat(res.getBody()).isEmpty();
+        assertThat(res.getBody().content()).isEmpty();
     }
 
     @Test
     void querySlots_filtersByTimeRange_returnsMatch() {
         TestSupport.seedSlot(slotRepository, calendarRepository, userId, T2, T3);  // second slot outside the filter range
 
-        ResponseEntity<SlotResponse[]> res = doQuery(userId, new SlotQueryFilter(null, T0, T1));
+        ResponseEntity<PageResponse<SlotResponse>> res = doQuery(userId, new SlotQueryFilter(null, T0, T1));
 
-        assertThat(res.getBody()).hasSize(1);
-        assertThat(res.getBody()[0].startTime()).isEqualTo(T0);
+        assertThat(res.getBody().content()).hasSize(1);
+        assertThat(res.getBody().content().get(0).startTime()).isEqualTo(T0);
     }
 
     /**
@@ -117,13 +154,13 @@ class SlotRouteIT {
      */
     @Test
     void querySlots_withNoBody_treatedAsNoFilter_returnsAllSlots() {
-        ResponseEntity<SlotResponse[]> res = restTemplate.exchange(
+        ResponseEntity<PageResponse<SlotResponse>> res = restTemplate.exchange(
                 "/api/users/{uid}/slots", QUERY,
                 new HttpEntity<>(jsonHeaders()),
-                SlotResponse[].class, userId);
+                new ParameterizedTypeReference<PageResponse<SlotResponse>>() {}, userId);
 
         assertThat(res.getStatusCode()).isEqualTo(HttpStatus.OK);
-        assertThat(res.getBody()).hasSize(1);
+        assertThat(res.getBody().content()).hasSize(1);
     }
 
     /**
@@ -228,9 +265,8 @@ class SlotRouteIT {
 
         assertThat(res.getStatusCode()).isEqualTo(HttpStatus.CONFLICT);
 
-        ResponseEntity<SlotResponse[]> after = restTemplate.getForEntity(
-                "/api/users/{uid}/slots", SlotResponse[].class, userId);
-        assertThat(after.getBody()).hasSize(1); // only the originally-seeded slot
+        ResponseEntity<PageResponse<SlotResponse>> after = listSlots(userId);
+        assertThat(after.getBody().content()).hasSize(1); // only the originally-seeded slot
     }
 
     @Test
@@ -382,12 +418,19 @@ class SlotRouteIT {
 
     // ── helpers ───────────────────────────────────────────────────────────────
 
-    private ResponseEntity<SlotResponse[]> doQuery(Long uid, SlotQueryFilter filter) {
+    private ResponseEntity<PageResponse<SlotResponse>> listSlots(Long uid) {
+        return restTemplate.exchange(
+                "/api/users/{uid}/slots", HttpMethod.GET,
+                new HttpEntity<>(jsonHeaders()),
+                new ParameterizedTypeReference<PageResponse<SlotResponse>>() {}, uid);
+    }
+
+    private ResponseEntity<PageResponse<SlotResponse>> doQuery(Long uid, SlotQueryFilter filter) {
         HttpHeaders headers = jsonHeaders();
         return restTemplate.exchange(
                 "/api/users/{uid}/slots", QUERY,
                 new HttpEntity<>(filter, headers),
-                SlotResponse[].class, uid);
+                new ParameterizedTypeReference<PageResponse<SlotResponse>>() {}, uid);
     }
 
     private HttpHeaders jsonHeaders() {

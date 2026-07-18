@@ -7,9 +7,11 @@ spring:
     password: ${DB_PASS:doodle}
   jpa:
     hibernate:
-      ddl-auto: update
+      ddl-auto: validate
     open-in-view: false
     show-sql: false
+  flyway:
+    enabled: true
 
 server:
   port: 8080

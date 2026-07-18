@@ -13,6 +13,8 @@ import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.data.jpa.test.autoconfigure.DataJpaTest;
 import org.springframework.boot.jpa.test.autoconfigure.TestEntityManager;
+import org.springframework.data.domain.PageRequest;
+import org.springframework.data.domain.Sort;
 import org.springframework.test.context.ActiveProfiles;
 
 @DataJpaTest
@@ -41,22 +43,34 @@ class SlotRepositoryTest {
         userId = user.getId();
     }
 
+    private static final PageRequest ALL = PageRequest.of(0, 10, Sort.by("startTime"));
+
     @Test
     void searchWithNoFilterReturnsAll() {
-        assertThat(slotRepository.search(userId, null, null, null)).hasSize(2);
+        assertThat(slotRepository.searchIds(userId, null, null, null, ALL).getContent()).hasSize(2);
     }
 
     @Test
     void searchFiltersByStatus() {
-        var free = slotRepository.search(userId, SlotStatus.FREE, null, null);
-        assertThat(free).hasSize(1);
+        var ids = slotRepository.searchIds(userId, SlotStatus.FREE, null, null, ALL).getContent();
+        assertThat(ids).hasSize(1);
+        var free = slotRepository.findByIdInWithMeetings(ids);
         assertThat(free.getFirst().getStatus()).isEqualTo(SlotStatus.FREE);
     }
 
     @Test
     void searchFiltersByTimeRange() {
-        var result = slotRepository.search(userId, null, now, now.plus(1, ChronoUnit.HOURS));
+        var result = slotRepository.searchIds(userId, null, now, now.plus(1, ChronoUnit.HOURS), ALL).getContent();
         assertThat(result).hasSize(1);
+    }
+
+    @Test
+    void searchIdsRespectsPageSizeAndReportsTotalElements() {
+        var page = slotRepository.searchIds(userId, null, null, null, PageRequest.of(0, 1, Sort.by("startTime")));
+
+        assertThat(page.getContent()).hasSize(1);
+        assertThat(page.getTotalElements()).isEqualTo(2);
+        assertThat(page.getTotalPages()).isEqualTo(2);
     }
 
     @Test

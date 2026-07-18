@@ -8,6 +8,7 @@ import io.irn.minidoodle.repository.MeetingParticipantRepository;
 import io.irn.minidoodle.repository.MeetingRepository;
 import io.irn.minidoodle.repository.SlotRepository;
 import io.irn.minidoodle.repository.UserRepository;
+import io.irn.minidoodle.web.dto.PageResponse;
 import io.irn.minidoodle.web.dto.UserCreateRequest;
 import io.irn.minidoodle.web.dto.UserResponse;
 import org.junit.jupiter.api.BeforeEach;
@@ -17,8 +18,10 @@ import org.springframework.boot.resttestclient.TestRestTemplate;
 import org.springframework.boot.resttestclient.autoconfigure.AutoConfigureTestRestTemplate;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.boot.test.context.SpringBootTest.WebEnvironment;
+import org.springframework.core.ParameterizedTypeReference;
 import org.springframework.http.HttpEntity;
 import org.springframework.http.HttpHeaders;
+import org.springframework.http.HttpMethod;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
@@ -43,9 +46,10 @@ class UserRouteIT {
 
     @Test
     void listUsers_returnsEmptyList_whenNoUsers() {
-        ResponseEntity<UserResponse[]> res = restTemplate.getForEntity("/api/users", UserResponse[].class);
+        ResponseEntity<PageResponse<UserResponse>> res = listUsers();
         assertThat(res.getStatusCode()).isEqualTo(HttpStatus.OK);
-        assertThat(res.getBody()).isEmpty();
+        assertThat(res.getBody().content()).isEmpty();
+        assertThat(res.getBody().totalElements()).isZero();
     }
 
     @Test
@@ -72,7 +76,22 @@ class UserRouteIT {
         TestSupport.seedUser(userRepository, calendarRepository, "Alice", "alice@test.com");
         TestSupport.seedUser(userRepository, calendarRepository, "Bob", "bob@test.com");
 
-        assertThat(restTemplate.getForEntity("/api/users", UserResponse[].class).getBody()).hasSize(2);
+        assertThat(listUsers().getBody().content()).hasSize(2);
+    }
+
+    @Test
+    void listUsers_respectsPageAndSizeParams() {
+        TestSupport.seedUser(userRepository, calendarRepository, "Alice", "alice@test.com");
+        TestSupport.seedUser(userRepository, calendarRepository, "Bob", "bob@test.com");
+        TestSupport.seedUser(userRepository, calendarRepository, "Carol", "carol@test.com");
+
+        ResponseEntity<PageResponse<UserResponse>> page0 = restTemplate.exchange(
+                "/api/users?page=0&size=2", HttpMethod.GET, HttpEntity.EMPTY,
+                new ParameterizedTypeReference<PageResponse<UserResponse>>() {});
+
+        assertThat(page0.getBody().content()).hasSize(2);
+        assertThat(page0.getBody().totalElements()).isEqualTo(3);
+        assertThat(page0.getBody().totalPages()).isEqualTo(2);
     }
 
     @Test
@@ -107,5 +126,10 @@ class UserRouteIT {
         ResponseEntity<String> res = restTemplate.postForEntity("/api/users", req, String.class);
 
         assertThat(res.getStatusCode()).isEqualTo(HttpStatus.BAD_REQUEST);
+    }
+
+    private ResponseEntity<PageResponse<UserResponse>> listUsers() {
+        return restTemplate.exchange("/api/users", HttpMethod.GET, HttpEntity.EMPTY,
+                new ParameterizedTypeReference<PageResponse<UserResponse>>() {});
     }
 }

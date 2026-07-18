@@ -4,8 +4,9 @@ import io.irn.minidoodle.domain.Calendar;
 import io.irn.minidoodle.domain.User;
 import io.irn.minidoodle.repository.UserRepository;
 import io.irn.minidoodle.web.dto.UserCreateRequest;
-import java.util.List;
 import lombok.RequiredArgsConstructor;
+import org.springframework.data.domain.Page;
+import org.springframework.data.domain.Pageable;
 import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -19,8 +20,8 @@ public class UserService {
     private final UserRepository userRepository;
 
     @Transactional(readOnly = true)
-    public List<User> findAll() {
-        return userRepository.findAll();
+    public Page<User> findAll(Pageable pageable) {
+        return userRepository.findAll(pageable);
     }
 
     @Transactional(readOnly = true)

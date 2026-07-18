@@ -5,6 +5,9 @@ import jakarta.validation.Validator;
 import java.util.Set;
 import java.util.stream.Collectors;
 import lombok.RequiredArgsConstructor;
+import org.springframework.data.domain.PageRequest;
+import org.springframework.data.domain.Pageable;
+import org.springframework.data.domain.Sort;
 import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Component;
 import org.springframework.web.server.ResponseStatusException;
@@ -34,6 +37,9 @@ import org.springframework.web.servlet.function.ServerRequest;
 @Component
 @RequiredArgsConstructor
 public class RequestValidator {
+
+    private static final int DEFAULT_PAGE_SIZE = 20;
+    private static final int MAX_PAGE_SIZE = 100;
 
     private final Validator validator;
 
@@ -65,5 +71,38 @@ public class RequestValidator {
             throw new ResponseStatusException(HttpStatus.BAD_REQUEST,
                     "%s must be a valid number, got '%s'".formatted(pathVariableName, raw));
         }
+    }
+
+    /**
+     * Parses {@code page}/{@code size} query params (both optional — default page 0, size
+     * {@value #DEFAULT_PAGE_SIZE}), rejecting a negative page or a size outside
+     * [1, {@value #MAX_PAGE_SIZE}] with 400 rather than silently clamping — an out-of-range value
+     * is much more likely a client bug than an intentional request for "as much as you'll give me."
+     */
+    public Pageable parsePageable(ServerRequest request, Sort sort) {
+        int page = parseIntParam(request, "page", 0);
+        int size = parseIntParam(request, "size", DEFAULT_PAGE_SIZE);
+
+        if (page < 0) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "page must be >= 0, got " + page);
+        }
+        if (size < 1 || size > MAX_PAGE_SIZE) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST,
+                    "size must be between 1 and %d, got %d".formatted(MAX_PAGE_SIZE, size));
+        }
+        return PageRequest.of(page, size, sort);
+    }
+
+    private int parseIntParam(ServerRequest request, String name, int defaultValue) {
+        return request.param(name)
+                .map(raw -> {
+                    try {
+                        return Integer.parseInt(raw);
+                    } catch (NumberFormatException e) {
+                        throw new ResponseStatusException(HttpStatus.BAD_REQUEST,
+                                "%s must be a valid integer, got '%s'".formatted(name, raw));
+                    }
+                })
+                .orElse(defaultValue);
     }
 }

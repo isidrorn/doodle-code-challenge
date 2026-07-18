@@ -1,9 +1,11 @@
 package io.irn.minidoodle.web;
 
 import io.irn.minidoodle.service.UserService;
+import io.irn.minidoodle.web.dto.PageResponse;
 import io.irn.minidoodle.web.dto.UserCreateRequest;
 import io.irn.minidoodle.web.mapper.UserMapper;
 import lombok.RequiredArgsConstructor;
+import org.springframework.data.domain.Sort;
 import org.springframework.http.MediaType;
 import org.springframework.stereotype.Component;
 import org.springframework.web.servlet.function.ServerRequest;
@@ -18,8 +20,9 @@ public class UserHandler {
     private final RequestValidator requestValidator;
 
     public ServerResponse listAll(ServerRequest request) throws Exception {
-        var body = userService.findAll().stream().map(userMapper::toResponse).toList();
-        return ok(body);
+        var pageable = requestValidator.parsePageable(request, Sort.by(Sort.Direction.ASC, "id"));
+        var page = userService.findAll(pageable).map(userMapper::toResponse);
+        return ok(PageResponse.from(page));
     }
 
     public ServerResponse getOne(ServerRequest request) throws Exception {

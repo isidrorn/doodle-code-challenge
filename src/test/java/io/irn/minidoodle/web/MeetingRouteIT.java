@@ -15,6 +15,7 @@ import io.irn.minidoodle.repository.UserRepository;
 import io.irn.minidoodle.web.dto.MeetingCancelRequest;
 import io.irn.minidoodle.web.dto.MeetingCreateRequest;
 import io.irn.minidoodle.web.dto.MeetingResponse;
+import io.irn.minidoodle.web.dto.PageResponse;
 import io.irn.minidoodle.web.dto.ParticipantResponse;
 import io.irn.minidoodle.web.dto.SlotResponse;
 import io.irn.minidoodle.web.dto.VoteRequest;
@@ -27,6 +28,7 @@ import org.springframework.boot.resttestclient.TestRestTemplate;
 import org.springframework.boot.resttestclient.autoconfigure.AutoConfigureTestRestTemplate;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.boot.test.context.SpringBootTest.WebEnvironment;
+import org.springframework.core.ParameterizedTypeReference;
 import org.springframework.http.HttpEntity;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.HttpMethod;
@@ -147,10 +149,11 @@ class MeetingRouteIT {
 
         // Alice's and Bob's slots are now BUSY and linked to the meeting; Carol had none to book,
         // which — per the design log — doesn't block confirming the meeting for everyone else.
-        ResponseEntity<SlotResponse[]> aliceSlots = restTemplate.getForEntity(
-                "/api/users/{uid}/slots", SlotResponse[].class, aliceId);
-        assertThat(aliceSlots.getBody()).allMatch(s -> s.status() == SlotStatus.BUSY);
-        assertThat(aliceSlots.getBody()).allSatisfy(s -> assertThat(s.meetingIds()).containsExactly(meetingId));
+        ResponseEntity<PageResponse<SlotResponse>> aliceSlots = restTemplate.exchange(
+                "/api/users/{uid}/slots", HttpMethod.GET, HttpEntity.EMPTY,
+                new ParameterizedTypeReference<PageResponse<SlotResponse>>() {}, aliceId);
+        assertThat(aliceSlots.getBody().content()).allMatch(s -> s.status() == SlotStatus.BUSY);
+        assertThat(aliceSlots.getBody().content()).allSatisfy(s -> assertThat(s.meetingIds()).containsExactly(meetingId));
     }
 
     @Test
@@ -274,10 +277,11 @@ class MeetingRouteIT {
 
         cancelMeeting(meetingId, aliceId, HttpStatus.NO_CONTENT);
 
-        ResponseEntity<SlotResponse[]> aliceSlots = restTemplate.getForEntity(
-                "/api/users/{uid}/slots", SlotResponse[].class, aliceId);
-        assertThat(aliceSlots.getBody()).allMatch(s -> s.status() == SlotStatus.FREE);
-        assertThat(aliceSlots.getBody()).allSatisfy(s -> assertThat(s.meetingIds()).isEmpty());
+        ResponseEntity<PageResponse<SlotResponse>> aliceSlots = restTemplate.exchange(
+                "/api/users/{uid}/slots", HttpMethod.GET, HttpEntity.EMPTY,
+                new ParameterizedTypeReference<PageResponse<SlotResponse>>() {}, aliceId);
+        assertThat(aliceSlots.getBody().content()).allMatch(s -> s.status() == SlotStatus.FREE);
+        assertThat(aliceSlots.getBody().content()).allSatisfy(s -> assertThat(s.meetingIds()).isEmpty());
     }
 
     // ── helpers ───────────────────────────────────────────────────────────────

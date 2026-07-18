@@ -128,6 +128,12 @@ echo " doesn't block meeting confirmation, see design-decisions-v2.md)"
 section "List Alice's slots"
 call GET "/api/users/$ALICE_ID/slots"
 
+section "Pagination: page=0&size=1 (envelope: content/page/size/totalElements/totalPages)"
+call GET "/api/users/$ALICE_ID/slots?page=0&size=1"
+
+section "Validation: size over the max → 400, not silently clamped"
+call GET "/api/users/$ALICE_ID/slots?size=1000"
+
 section "QUERY: filter by status=FREE"
 call QUERY "/api/users/$ALICE_ID/slots" '{"status":"FREE"}'
 
@@ -188,7 +194,7 @@ echo "Meeting $DECLINED_MEETING_ID is CANCELLED immediately — no confirmation 
 # ── 5. cleanup + observability ────────────────────────────────────────────────
 
 section "Delete a slot"
-call DELETE "/api/users/$BOB_ID/slots/$(curl -s "$BASE_URL/api/users/$BOB_ID/slots" | jq -r '.[0].id')"
+call DELETE "/api/users/$BOB_ID/slots/$(curl -s "$BASE_URL/api/users/$BOB_ID/slots" | jq -r '.content[0].id')"
 
 section "Observability"
 call GET /actuator/health

@@ -15,6 +15,9 @@ import java.util.HashSet;
 import java.util.List;
 import java.util.Set;
 import lombok.RequiredArgsConstructor;
+import org.springframework.data.domain.Page;
+import org.springframework.data.domain.PageImpl;
+import org.springframework.data.domain.Pageable;
 import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -29,9 +32,15 @@ public class SlotService {
     private final CalendarRepository calendarRepository;
     private final SlotDurationConfig slotDurationConfig;
 
+    /**
+     * Two queries, not one — see SlotRepository.searchIds's note on why pagination and an
+     * eagerly-fetched @ManyToMany collection can't share a single query.
+     */
     @Transactional(readOnly = true)
-    public List<Slot> query(Long userId, SlotQueryFilter filter) {
-        return slotRepository.search(userId, filter.status(), filter.from(), filter.to());
+    public Page<Slot> query(Long userId, SlotQueryFilter filter, Pageable pageable) {
+        Page<Long> idPage = slotRepository.searchIds(userId, filter.status(), filter.from(), filter.to(), pageable);
+        List<Slot> slots = slotRepository.findByIdInWithMeetings(idPage.getContent());
+        return new PageImpl<>(slots, pageable, idPage.getTotalElements());
     }
 
     /**

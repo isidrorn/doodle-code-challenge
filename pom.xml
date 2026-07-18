@@ -51,6 +51,20 @@
             <scope>runtime</scope>
         </dependency>
 
+        <!-- Schema migrations (docker-compose/Postgres profile only — see application.yml /
+             application-local.yml / design-decisions-v4.md). Spring Boot 4 modularized Flyway's
+             autoconfiguration out of spring-boot-autoconfigure into its own starter — flyway-core
+             alone on the classpath is not enough to make FlywayAutoConfiguration activate. -->
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-flyway</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>org.flywaydb</groupId>
+            <artifactId>flyway-database-postgresql</artifactId>
+            <scope>runtime</scope>
+        </dependency>
+
         <!-- Observability -->
         <dependency>
             <groupId>org.springframework.boot</groupId>

@@ -61,10 +61,25 @@ curl -s -w "\n%{http_code}\n" "$BASE/api/users/999999"
 
 ---
 
+## Pagination
+
+Every list/query endpoint (`GET /api/users`, `GET`/`QUERY /api/users/{userId}/slots`) is paginated
+via ordinary `page`/`size` query params — defaults `page=0`, `size=20`, capped at `size=100` — and
+returns an envelope instead of a bare array: `{content, page, size, totalElements, totalPages}`.
+
+```bash
+curl -s "$BASE/api/users?page=0&size=1" | jq
+
+# size out of [1, 100] → 400, not silently clamped
+curl -s -w "\n%{http_code}\n" "$BASE/api/users?size=1000"
+```
+
+---
+
 ## Users
 
 ```bash
-# List all users
+# List all users (paginated — see "Pagination" above)
 curl -s "$BASE/api/users" | jq
 
 # Get one user
@@ -91,7 +106,7 @@ system-wide `scheduling.slot-duration-minutes`, default 30), computed server-sid
 ```bash
 USER=1   # replace with the actual userId from the seeder log
 
-# List all slots (GET — no filter)
+# List all slots (GET — no filter; paginated, see "Pagination" above)
 curl -s "$BASE/api/users/$USER/slots" | jq
 
 # ── HTTP QUERY verb — filter by body ──────────────────────────────────────────
