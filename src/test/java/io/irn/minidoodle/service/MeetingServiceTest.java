@@ -18,6 +18,7 @@ import io.irn.minidoodle.repository.MeetingParticipantRepository;
 import io.irn.minidoodle.repository.MeetingRepository;
 import io.irn.minidoodle.repository.SlotRepository;
 import io.irn.minidoodle.repository.UserRepository;
+import io.irn.minidoodle.web.dto.AvailabilityWindow;
 import io.irn.minidoodle.web.dto.MeetingCreateRequest;
 import java.time.Instant;
 import java.util.List;
@@ -248,6 +249,86 @@ class MeetingServiceTest {
         assertThat(result.getStatus()).isEqualTo(MeetingStatus.CONFIRMED);
         assertThat(result.getSlots()).isEmpty();
         assertThat(organizerSlot1.isFree()).isTrue();
+    }
+
+    // ── availability ──────────────────────────────────────────────────────────
+
+    @Test
+    void availability_throwsBadRequest_whenFromNotBeforeTo() {
+        assertStatus(HttpStatus.BAD_REQUEST,
+                () -> meetingService.availability(List.of(ORGANIZER_ID), T1, T0));
+    }
+
+    @Test
+    void availability_throwsBadRequest_whenFromNotGridAligned() {
+        assertStatus(HttpStatus.BAD_REQUEST,
+                () -> meetingService.availability(List.of(ORGANIZER_ID), T0.plusSeconds(1), T1));
+    }
+
+    @Test
+    void availability_throwsBadRequest_whenRangeNotMultipleOfSlotDuration() {
+        assertStatus(HttpStatus.BAD_REQUEST,
+                () -> meetingService.availability(List.of(ORGANIZER_ID), T0, T0.plusSeconds(600)));
+    }
+
+    @Test
+    void availability_throwsBadRequest_whenRangeExceedsMaxWindows() {
+        // MAX_AVAILABILITY_WINDOWS is 2_000; 2_001 windows on the 30-minute grid overflows it.
+        Instant tooFar = T0.plusSeconds(2_001 * 1800L);
+        assertStatus(HttpStatus.BAD_REQUEST,
+                () -> meetingService.availability(List.of(ORGANIZER_ID), T0, tooFar));
+    }
+
+    @Test
+    void availability_throwsNotFound_whenUserMissing() {
+        when(userRepository.existsById(ORGANIZER_ID)).thenReturn(false);
+        assertStatus(HttpStatus.NOT_FOUND,
+                () -> meetingService.availability(List.of(ORGANIZER_ID), T0, T1));
+    }
+
+    @Test
+    void availability_returnsWindows_taggedByWhichUsersAreFree() {
+        when(userRepository.existsById(ORGANIZER_ID)).thenReturn(true);
+        when(userRepository.existsById(REQUIRED_ID)).thenReturn(true);
+        when(userRepository.existsById(OPTIONAL_ID)).thenReturn(true);
+        // Organizer free the whole window; required free only the first half; optional never free.
+        when(slotRepository.findFreeSlotsCovering(ORGANIZER_ID, T0, T1))
+                .thenReturn(List.of(slotOwnedBy(ORGANIZER_ID, T0, MID), slotOwnedBy(ORGANIZER_ID, MID, T1)));
+        when(slotRepository.findFreeSlotsCovering(REQUIRED_ID, T0, T1))
+                .thenReturn(List.of(slotOwnedBy(REQUIRED_ID, T0, MID)));
+        when(slotRepository.findFreeSlotsCovering(OPTIONAL_ID, T0, T1)).thenReturn(List.of());
+
+        List<AvailabilityWindow> result =
+                meetingService.availability(List.of(ORGANIZER_ID, REQUIRED_ID, OPTIONAL_ID), T0, T1);
+
+        assertThat(result).hasSize(2);
+        assertThat(result.get(0).startTime()).isEqualTo(T0);
+        assertThat(result.get(0).freeUserIds()).containsExactly(ORGANIZER_ID, REQUIRED_ID);
+        assertThat(result.get(1).startTime()).isEqualTo(MID);
+        assertThat(result.get(1).freeUserIds()).containsExactly(ORGANIZER_ID);
+    }
+
+    @Test
+    void availability_returnsNoWindow_whenNoOneIsFree() {
+        when(userRepository.existsById(ORGANIZER_ID)).thenReturn(true);
+        when(slotRepository.findFreeSlotsCovering(ORGANIZER_ID, T0, T1)).thenReturn(List.of());
+
+        List<AvailabilityWindow> result = meetingService.availability(List.of(ORGANIZER_ID), T0, T1);
+
+        assertThat(result).isEmpty();
+    }
+
+    @Test
+    void availability_dedupesRepeatedUserIds() {
+        when(userRepository.existsById(ORGANIZER_ID)).thenReturn(true);
+        when(slotRepository.findFreeSlotsCovering(ORGANIZER_ID, T0, T1))
+                .thenReturn(List.of(slotOwnedBy(ORGANIZER_ID, T0, MID)));
+
+        List<AvailabilityWindow> result =
+                meetingService.availability(List.of(ORGANIZER_ID, ORGANIZER_ID), T0, T1);
+
+        assertThat(result).hasSize(1);
+        assertThat(result.get(0).freeUserIds()).containsExactly(ORGANIZER_ID);
     }
 
     // ── cancel ────────────────────────────────────────────────────────────────

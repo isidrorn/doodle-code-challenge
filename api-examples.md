@@ -227,6 +227,22 @@ curl -s -w "\n%{http_code}\n" -X DELETE "$BASE/api/meetings/1" \
 curl -s -w "\n%{http_code}\n" -X DELETE "$BASE/api/meetings/1" \
   -H "Content-Type: application/json" \
   -d "{\"userId\":$BOB}"
+
+# ── HTTP QUERY verb — find a time that works, instead of already knowing one ───────────────────
+# Every field is required here (unlike the slots QUERY filter) — there's no sensible "empty body"
+# default for "find availability." Returns one entry per slot-grid window in [from,to) where at
+# least one of userIds is FREE; freeUserIds is the subset actually free at that window, not
+# necessarily all of them. See design-decisions-v5.md.
+curl -s -X QUERY "$BASE/api/meetings/availability" \
+  -H "Content-Type: application/json" \
+  -H "Accept: application/json" \
+  -d "{\"userIds\":[$ALICE,$BOB],\"from\":\"2027-01-02T09:00:00Z\",\"to\":\"2027-01-02T10:00:00Z\"}" | jq
+
+# from not aligned to the slot grid → 400
+curl -s -w "\n%{http_code}\n" -X QUERY "$BASE/api/meetings/availability" \
+  -H "Content-Type: application/json" \
+  -d "{\"userIds\":[$ALICE],\"from\":\"2027-01-02T09:00:07Z\",\"to\":\"2027-01-02T10:00:00Z\"}"
+# ──────────────────────────────────────────────────────────────────────────────────────────────
 ```
 
 ---

@@ -38,6 +38,7 @@ import org.springframework.web.servlet.function.ServerResponse;
  * GET    /api/meetings/{meetingId}                          → get meeting
  * DELETE /api/meetings/{meetingId}                          → cancel meeting (organizer only)
  * POST   /api/meetings/{meetingId}/participants/{userId}/vote → cast a vote
+ * QUERY  /api/meetings/availability                         → find free windows across users
  * </pre>
  *
  * <p>The QUERY route is deliberately its own {@code @Bean}, separate from {@link #routes}: Spring
@@ -59,6 +60,7 @@ public class SlotRouterConfig {
     private static final String     MEETINGS      = "/api/meetings";
     private static final String     MEETING_BY_ID = "/api/meetings/{meetingId}";
     private static final String     MEETING_VOTE  = "/api/meetings/{meetingId}/participants/{userId}/vote";
+    private static final String     MEETING_AVAILABILITY = "/api/meetings/availability";
 
     /**
      * springdoc-openapi's automatic discovery of functional routes only populates real
@@ -109,6 +111,17 @@ public class SlotRouterConfig {
     @Bean
     public RouterFunction<ServerResponse> queryRoute(SlotHandler slots, RouterExceptionFilter exceptionFilter) {
         return route(method(QUERY).and(path(SLOTS)).and(accept(MediaType.APPLICATION_JSON)), slots::query)
+                .filter(exceptionFilter::filter);
+    }
+
+    /**
+     * Same isolation reasoning as {@link #queryRoute}: a second, independent {@code QUERY} route
+     * (see {@link MeetingHandler#availability}) that springdoc's route introspection can't
+     * document either — kept in its own bean so it can't take the other one down with it either.
+     */
+    @Bean
+    public RouterFunction<ServerResponse> meetingAvailabilityRoute(MeetingHandler meetings, RouterExceptionFilter exceptionFilter) {
+        return route(method(QUERY).and(path(MEETING_AVAILABILITY)).and(accept(MediaType.APPLICATION_JSON)), meetings::availability)
                 .filter(exceptionFilter::filter);
     }
 }

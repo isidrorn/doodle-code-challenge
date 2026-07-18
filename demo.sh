@@ -155,6 +155,15 @@ call PATCH "/api/users/$ALICE_ID/slots/$ALICE_SLOT1" '{"status":"NOT_A_STATUS"}'
 
 # ── 3. meetings ───────────────────────────────────────────────────────────────
 
+section "QUERY: find a time that works — Alice, Bob, and Carol's availability"
+echo "(Carol has no slots at all, so she never shows up in freeUserIds — this is the one piece of"
+echo " core Doodle behavior — suggest a time, don't require one already picked — the rest of the"
+echo " API didn't cover on its own. See design-decisions-v5.md.)"
+call QUERY /api/meetings/availability "{\"userIds\":[$ALICE_ID,$BOB_ID,$CAROL_ID],\"from\":\"$MEETING_START\",\"to\":\"$MEETING_END\"}"
+
+section "Validation: availability query with an unaligned 'from' → 400, not 500"
+call QUERY /api/meetings/availability "{\"userIds\":[$ALICE_ID],\"from\":\"$(iso_from_epoch $((GRID_START + 60)))\",\"to\":\"$MEETING_END\"}"
+
 section "Validation: propose a meeting with a blank title → 400"
 call POST /api/meetings "{\"title\":\"\",\"organizerUserId\":$ALICE_ID,\"startTime\":\"$MEETING_START\",\"endTime\":\"$MEETING_END\"}"
 

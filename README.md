@@ -21,7 +21,8 @@ it documented in Swagger UI.
 - **Calendar** is a domain concept only — it's never exposed as its own REST resource; slots are
   addressed through `/api/users/{userId}/slots`.
 - **Querying availability** — filter a user's slots by status and/or time range via `QUERY` (or list
-  them all via plain `GET`).
+  them all via plain `GET`), or find windows where several users are simultaneously free via
+  `QUERY /api/meetings/availability`.
 - Designed with "hundreds of users, thousands of slots" in mind: an index on `(calendar_id,
   start_time)`, row-level locking sized to avoid serializing unrelated writes (see below), and a
   concurrency test that actually proves it rather than just asserting it in a docstring.
@@ -92,6 +93,7 @@ POST   /api/meetings                                         → propose a meeti
 GET    /api/meetings/{meetingId}                              → get meeting
 DELETE /api/meetings/{meetingId}                              → cancel meeting (organizer only)
 POST   /api/meetings/{meetingId}/participants/{userId}/vote  → cast a vote
+QUERY  /api/meetings/availability                             → find free windows across users (userIds, from, to in body)
 ```
 
 Every path variable and request body is validated before it reaches business logic — a bad-typed id
@@ -170,7 +172,7 @@ mvn test -Dtest=*Test,*IT
 | Repository (`@DataJpaTest`) | `SlotRepositoryTest`, `CalendarRepositoryTest` |
 | Integration (`@SpringBootTest`, `RANDOM_PORT`, H2) | `UserRouteIT`, `SlotRouteIT`, `MeetingRouteIT` |
 
-109 tests total. Integration tests share seeding/cleanup helpers from
+123 tests total. Integration tests share seeding/cleanup helpers from
 [`TestSupport`](src/test/java/io/irn/minidoodle/TestSupport.java) rather than a common base
 class — each IT class carries its own `@SpringBootTest`/`@AutoConfigureTestRestTemplate` setup.
 
@@ -194,13 +196,10 @@ incomplete solution as long as the reasoning is explained:
   body as-is (e.g. cancelling a meeting only checks that the *supplied* `userId` matches the
   organizer, not that the caller has proven they are that user). Out of scope for this brief, but a
   real gap if this were exposed beyond a trusted network.
-- **No cross-participant "find a time that works for everyone" suggestion** — the closest real Doodle
-  gets to its own core feature. This implementation requires a proposer to already pick a
-  `startTime`/`endTime`; participants can `QUERY` their own free slots first, but there's no endpoint
-  that intersects several users' availability automatically.
 
 (Pagination and schema migrations were both flagged here too until
-[`design-decisions-v4.md`](design-decisions-v4.md) addressed them.)
+[`design-decisions-v4.md`](design-decisions-v4.md) addressed them; cross-participant availability
+was flagged until [`design-decisions-v5.md`](design-decisions-v5.md) did.)
 
 ## Design decisions & how this was validated
 
@@ -221,6 +220,10 @@ they intentionally aren't merged into one:
   why it needed a two-query approach, not just an `@EntityGraph` on a `Pageable` query) and Flyway
   for the docker-compose/Postgres profile, with migrations reconstructed from the actual schema
   history rather than a single flattened snapshot.
+- [`design-decisions-v5.md`](design-decisions-v5.md) — `QUERY /api/meetings/availability`: the one
+  piece of core Doodle behavior (suggest a time that works, instead of requiring one already picked)
+  that was otherwise missing, built by reusing an existing per-user free-slot query across multiple
+  users instead of adding new domain state.
 
 (The original take-home prompt isn't included in this repo, since take-home exercises are typically
 not meant to be republished — its requirements are summarized in `spec-review.md`.)

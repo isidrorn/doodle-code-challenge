@@ -1,6 +1,7 @@
 package io.irn.minidoodle.web;
 
 import io.irn.minidoodle.service.MeetingService;
+import io.irn.minidoodle.web.dto.AvailabilityQuery;
 import io.irn.minidoodle.web.dto.MeetingCancelRequest;
 import io.irn.minidoodle.web.dto.MeetingCreateRequest;
 import io.irn.minidoodle.web.dto.VoteRequest;
@@ -24,6 +25,18 @@ public class MeetingHandler {
         var meeting = meetingService.create(body);
         return ServerResponse.status(201).contentType(MediaType.APPLICATION_JSON)
                 .body(meetingMapper.toResponse(meeting));
+    }
+
+    /**
+     * HTTP QUERY: "when, within this range, is at least one of these users free?" — unlike
+     * SlotHandler.query, every field in the body is required, so this goes through the normal
+     * parseAndValidate path rather than SlotHandler.parseFilter's "empty body means no filter"
+     * convention (there's no sensible default set of users/range to fall back to).
+     */
+    public ServerResponse availability(ServerRequest request) throws Exception {
+        var body = requestValidator.parseAndValidate(request, AvailabilityQuery.class);
+        var windows = meetingService.availability(body.userIds(), body.from(), body.to());
+        return ok(windows);
     }
 
     public ServerResponse getOne(ServerRequest request) throws Exception {

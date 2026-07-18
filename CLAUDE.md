@@ -207,7 +207,14 @@ POST   /api/meetings                                          propose a meeting 
 GET    /api/meetings/{meetingId}                               get meeting
 DELETE /api/meetings/{meetingId}                               cancel meeting (organizer only; body: {userId})
 POST   /api/meetings/{meetingId}/participants/{userId}/vote   cast a vote (body: {vote})
+QUERY  /api/meetings/availability                              find free windows across users (userIds, from, to in body)
 ```
+
+`MeetingHandler.availability`/`MeetingService.availability` are the one route where a `QUERY` body's
+fields are all *required* — it goes through `RequestValidator.parseAndValidate`, not
+`SlotHandler.parseFilter`'s "empty body means no filter" convention, since there's no sensible
+default for "find availability" the way an absent slot filter sensibly means "list everything." See
+design-decisions-v5.md.
 
 ### Pagination
 
@@ -260,7 +267,7 @@ few times in a row, since a broken lock would only show up as occasional extra `
 - `@MockBean`/`@SpyBean` are gone in Spring Boot 4 — use plain `@Mock` +
   `@ExtendWith(MockitoExtension.class)` for unit tests.
 - `DataSeeder` is excluded under the `test` profile (`@Profile("!test")`).
-- 109 tests total as of the pagination + Flyway pass (design-decisions-v4.md).
+- 123 tests total as of the cross-participant availability pass (design-decisions-v5.md).
 
 ### Schema management: Flyway (docker-compose/Postgres only) vs. Hibernate auto-DDL (local/test)
 
@@ -287,8 +294,8 @@ README's QUERY footprint to the short pointer it already has.
 
 ## Prior spec-compliance review and design decision logs
 
-Four files are **historical records**, not current TODO lists — don't re-fix anything they describe
-as already fixed, and don't merge their content, they document four separate passes:
+Five files are **historical records**, not current TODO lists — don't re-fix anything they describe
+as already fixed, and don't merge their content, they document five separate passes:
 
 - [`spec-review.md`](spec-review.md): a pass that checked the *original* single-slot-conversion
   meeting model against `coding-challenge.md`, found four issues (dead bean validation, a TOCTOU
@@ -320,3 +327,10 @@ as already fixed, and don't merge their content, they document four separate pas
   the "Pagination" section above for the `searchIds()`/`findByIdInWithMeetings()` two-query shape)
   and Flyway for the docker-compose/Postgres profile (see "Schema management" above). Read it before
   changing `PageResponse`/`RequestValidator.parsePageable`, or before adding a migration.
+- [`design-decisions-v5.md`](design-decisions-v5.md): `QUERY /api/meetings/availability` —
+  cross-participant free-window search, added to close the one piece of core Doodle behavior
+  (suggesting a time that works, rather than requiring one already chosen) the rest of the API
+  didn't cover. Read it before touching `MeetingService.availability()` — it explains why the
+  implementation reuses `SlotRepository.findFreeSlotsCovering` per user instead of a new query, and
+  why grid-aligned, fixed-duration slots make that a plain set-membership walk rather than general
+  interval-intersection math.

@@ -12,6 +12,8 @@ import io.irn.minidoodle.repository.MeetingParticipantRepository;
 import io.irn.minidoodle.repository.MeetingRepository;
 import io.irn.minidoodle.repository.SlotRepository;
 import io.irn.minidoodle.repository.UserRepository;
+import io.irn.minidoodle.web.dto.AvailabilityQuery;
+import io.irn.minidoodle.web.dto.AvailabilityWindow;
 import io.irn.minidoodle.web.dto.MeetingCancelRequest;
 import io.irn.minidoodle.web.dto.MeetingCreateRequest;
 import io.irn.minidoodle.web.dto.MeetingResponse;
@@ -41,6 +43,8 @@ import org.springframework.test.context.ActiveProfiles;
 @AutoConfigureTestRestTemplate
 @ActiveProfiles("test")
 class MeetingRouteIT {
+
+    static final HttpMethod QUERY = HttpMethod.valueOf("QUERY");
 
     // 60-minute window == 2 slots on the default 30-minute grid
     static final Instant T0  = Instant.parse("2026-06-01T09:00:00Z");
@@ -284,7 +288,84 @@ class MeetingRouteIT {
         assertThat(aliceSlots.getBody().content()).allSatisfy(s -> assertThat(s.meetingIds()).isEmpty());
     }
 
+    // ── availability ──────────────────────────────────────────────────────────
+
+    @Test
+    void availability_returns200_withWindowsTaggedByFreeUsers() {
+        // Alice and Bob are both free [T0,T1); Carol has no slots at all in that window.
+        ResponseEntity<AvailabilityWindow[]> res = doAvailabilityQuery(List.of(aliceId, bobId, carolId), T0, T1);
+
+        assertThat(res.getStatusCode()).isEqualTo(HttpStatus.OK);
+        assertThat(res.getBody()).hasSize(2);
+        assertThat(res.getBody()[0].startTime()).isEqualTo(T0);
+        assertThat(res.getBody()[0].freeUserIds()).containsExactlyInAnyOrder(aliceId, bobId);
+        assertThat(res.getBody()[1].startTime()).isEqualTo(MID);
+        assertThat(res.getBody()[1].freeUserIds()).containsExactlyInAnyOrder(aliceId, bobId);
+    }
+
+    @Test
+    void availability_returnsEmpty_whenQueriedUserHasNoFreeSlots() {
+        ResponseEntity<AvailabilityWindow[]> res = doAvailabilityQuery(List.of(carolId), T0, T1);
+
+        assertThat(res.getStatusCode()).isEqualTo(HttpStatus.OK);
+        assertThat(res.getBody()).isEmpty();
+    }
+
+    @Test
+    void availability_returns400_whenFromNotGridAligned() {
+        ResponseEntity<String> res = restTemplate.exchange(
+                "/api/meetings/availability", QUERY,
+                new HttpEntity<>(new AvailabilityQuery(List.of(aliceId), T0.plusSeconds(60), T1), jsonHeaders()),
+                String.class);
+
+        assertThat(res.getStatusCode()).isEqualTo(HttpStatus.BAD_REQUEST);
+    }
+
+    @Test
+    void availability_returns400_whenUserIdsEmpty() {
+        ResponseEntity<String> res = restTemplate.exchange(
+                "/api/meetings/availability", QUERY,
+                new HttpEntity<>(new AvailabilityQuery(List.of(), T0, T1), jsonHeaders()),
+                String.class);
+
+        assertThat(res.getStatusCode()).isEqualTo(HttpStatus.BAD_REQUEST);
+    }
+
+    @Test
+    void availability_returns404_whenUserMissing() {
+        ResponseEntity<String> res = restTemplate.exchange(
+                "/api/meetings/availability", QUERY,
+                new HttpEntity<>(new AvailabilityQuery(List.of(9999L), T0, T1), jsonHeaders()),
+                String.class);
+
+        assertThat(res.getStatusCode()).isEqualTo(HttpStatus.NOT_FOUND);
+    }
+
+    @Test
+    void availability_returns400_whenBodyIsMalformedJson() {
+        ResponseEntity<String> res = restTemplate.exchange(
+                "/api/meetings/availability", QUERY,
+                new HttpEntity<>("{not valid json", jsonHeaders()),
+                String.class);
+
+        assertThat(res.getStatusCode()).isEqualTo(HttpStatus.BAD_REQUEST);
+    }
+
     // ── helpers ───────────────────────────────────────────────────────────────
+
+    private ResponseEntity<AvailabilityWindow[]> doAvailabilityQuery(List<Long> userIds, Instant from, Instant to) {
+        return restTemplate.exchange(
+                "/api/meetings/availability", QUERY,
+                new HttpEntity<>(new AvailabilityQuery(userIds, from, to), jsonHeaders()),
+                AvailabilityWindow[].class);
+    }
+
+    private HttpHeaders jsonHeaders() {
+        HttpHeaders h = new HttpHeaders();
+        h.setContentType(MediaType.APPLICATION_JSON);
+        h.setAccept(List.of(MediaType.APPLICATION_JSON));
+        return h;
+    }
 
     private ResponseEntity<MeetingResponse> createMeeting(List<Long> required, List<Long> optional) {
         var req = new MeetingCreateRequest("Team sync", "Weekly", aliceId, T0, T1, required, optional);
