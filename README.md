@@ -1,5 +1,7 @@
 # minidoodle
 
+[![CI](https://github.com/isidrorn/doodle-code-challenge/actions/workflows/ci.yml/badge.svg)](https://github.com/isidrorn/doodle-code-challenge/actions/workflows/ci.yml)
+
 A "mini Doodle" meeting-scheduling backend: users define available time slots on a personal
 calendar, propose meetings against other users, and a meeting confirms once every required
 participant votes yes — booking each participant's free slots automatically. Built with Spring Boot

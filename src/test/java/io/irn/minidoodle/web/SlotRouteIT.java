@@ -338,6 +338,25 @@ class SlotRouteIT {
         assertThat(res.getBody().status()).isEqualTo(SlotStatus.BUSY);
     }
 
+    /**
+     * The time grid validates new boundaries only — it never re-judges stored ones. A slot whose
+     * boundaries don't sit on the current grid (e.g. created before the grid parameter was
+     * tightened) must still accept a status-only PATCH; only moving/resizing it is grid-checked.
+     * Seeded directly through the repository, since the API itself won't create off-grid slots.
+     */
+    @Test
+    void patchSlot_statusOnly_succeeds_onSlotOffTheCurrentGrid() {
+        Long offGridId = TestSupport.seedSlot(slotRepository, calendarRepository, userId,
+                T2.plusSeconds(600), T2.plusSeconds(2400));   // 10:10–10:40 on a 30-minute grid
+        var req = new HttpEntity<>(new SlotUpdateRequest(null, null, SlotStatus.BUSY), jsonHeaders());
+
+        ResponseEntity<SlotResponse> res = restTemplate.exchange(
+                "/api/users/{uid}/slots/{sid}", HttpMethod.PATCH, req, SlotResponse.class, userId, offGridId);
+
+        assertThat(res.getStatusCode()).isEqualTo(HttpStatus.OK);
+        assertThat(res.getBody().status()).isEqualTo(SlotStatus.BUSY);
+    }
+
     /** startTime alone shifts the slot preserving its length (the seeded slot is 30 minutes). */
     @Test
     void patchSlot_rescheduleByStartTime_shiftsSlotPreservingLength() {

@@ -1,0 +1,26 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      # JDK 21 exactly — Lombok's annotation processing silently generates nothing under newer
+      # JDKs (see README's Run section), so a newer runner JDK would fail with misleading errors.
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+          cache: maven
+
+      # *IT classes are not picked up by plain `mvn test` (no failsafe plugin configured) —
+      # the explicit -Dtest pattern runs the full pyramid: unit, @DataJpaTest, and the
+      # real-HTTP @SpringBootTest suites, all against H2.
+      - name: Run full test suite (unit + repository + integration)
+        run: mvn -B test -Dtest='*Test,*IT'
