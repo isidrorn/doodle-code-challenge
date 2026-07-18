@@ -173,7 +173,7 @@ mvn test -Dtest=*Test,*IT
 | Repository (`@DataJpaTest`) | `SlotRepositoryTest`, `CalendarRepositoryTest` |
 | Integration (`@SpringBootTest`, `RANDOM_PORT`, H2) | `UserRouteIT`, `SlotRouteIT`, `MeetingRouteIT` |
 
-123 tests total. Integration tests share seeding/cleanup helpers from
+127 tests total. Integration tests share seeding/cleanup helpers from
 [`TestSupport`](src/test/java/io/irn/minidoodle/TestSupport.java) rather than a common base
 class — each IT class carries its own `@SpringBootTest`/`@AutoConfigureTestRestTemplate` setup.
 
@@ -233,6 +233,10 @@ pass — they intentionally aren't merged into one:
   time grid: why "create time slots with configurable duration" means the user picks each slot's
   start and end, and why the grid parameter validates new writes instead of deriving domain data
   (so changing it can never corrupt existing rows).
+- [`design-decisions-v8.md`](design-decisions-v8.md) — the pre-delivery review-hardening pass:
+  HTTP-agnostic domain exceptions replacing `ResponseStatusException` in services, cancel moved
+  off DELETE-with-body, length caps + a real unique email constraint (including a live-caught
+  lesson about migrations vs. data older code produced), and CI.
 
 How we work — architecture, conventions, and the principles behind all of the above — is written up
 declaratively in [`conventions.md`](conventions.md), and

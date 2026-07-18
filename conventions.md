@@ -48,9 +48,10 @@ config/       configuration properties, seeding, OpenAPI config
 - Entity → DTO mapping lives in dedicated mapper components under `web/mapper/` — not in static
   factory methods on the DTOs, not inline in controllers.
 - Bean validation via `@Valid @RequestBody` and constraint annotations on the request records.
-  **Structural validation** (non-null, non-blank, well-formed email) belongs on the DTO;
-  **business-rule validation** (grid alignment, overlap, state-machine legality) belongs in the
-  service.
+  **Structural validation** (non-null, non-blank, well-formed email, `@Size` caps) belongs on the
+  DTO; **business-rule validation** (grid alignment, overlap, state-machine legality) belongs in
+  the service. Every free-text field carries a `@Size` cap that matches its DB column size
+  exactly — an over-long value is a 400 at the boundary, never a database error.
 - Path variables are typed method parameters (`@PathVariable Long userId`) — Spring's type
   coercion turns malformed ids into 400s; no hand-rolled parsing.
 

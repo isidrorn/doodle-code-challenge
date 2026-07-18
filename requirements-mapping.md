@@ -124,8 +124,9 @@ typing) is handled with explicit casts and a smoke-test-on-Postgres rule —
   `/swagger-ui.html`.
 - **Metrics (plus)** — Micrometer + Prometheus at `/actuator/prometheus`, health at
   `/actuator/health`.
-- **Tests (plus)** — 123 tests across three layers (unit / `@DataJpaTest` / full-HTTP
-  `@SpringBootTest`), including a real 8-thread concurrency test; see README's test section.
+- **Tests (plus)** — 127 tests across three layers (unit / `@DataJpaTest` / full-HTTP
+  `@SpringBootTest`), including a real 8-thread concurrency test; see README's test section. A
+  GitHub Actions workflow runs the full suite on every push (badge in the README).
 - **Regular, meaningful commits** — the git history is the development record, kept honest
   (including passes that reversed earlier decisions); each significant pass also has a durable
   decision log (`spec-review.md`, `design-decisions-v2..v7.md`) so the reasoning outlives the

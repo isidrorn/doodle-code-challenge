@@ -253,7 +253,9 @@ few times in a row, since a broken lock would only show up as occasional extra `
 - `@MockBean`/`@SpyBean` are gone in Spring Boot 4 — use plain `@Mock` +
   `@ExtendWith(MockitoExtension.class)` for unit tests.
 - `DataSeeder` is excluded under the `test` profile (`@Profile("!test")`).
-- 123 tests total as of the time-grid redesign (design-decisions-v7.md).
+- 127 tests total as of the review-hardening pass (design-decisions-v8.md). CI (GitHub Actions,
+  `.github/workflows/ci.yml`) runs the full `*Test,*IT` pattern on every push — keep that pattern
+  in sync if test naming conventions ever change.
 
 ### Schema management: Flyway (docker-compose/Postgres only) vs. Hibernate auto-DDL (local/test)
 
@@ -301,3 +303,8 @@ need `spring-boot-starter-flyway` too.
     time grid — reverses v2's fixed-duration model; read before touching `TimeGridConfig`,
     slot creation/PATCH validation, or `MeetingService.availability()`. (v2–v5 describe the
     fixed-duration era in their historical context; same rule, don't "fix" them.)
+  - [`design-decisions-v8.md`](design-decisions-v8.md): the review-hardening pass — domain
+    exceptions, the POST /cancel rationale, length caps + unique email (read its migration
+    lesson before writing any migration that adds a constraint over existing data), CI.
+    (v1–v7 mention `ResponseStatusException`-throwing services and the DELETE cancel route in
+    their historical context; same rule applies.)
