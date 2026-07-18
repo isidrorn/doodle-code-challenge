@@ -49,7 +49,9 @@ codebase is built in general (architecture, conventions, principles), see
   once every REQUIRED participant has voted YES the meeting confirms and books each participant's
   FREE slots covering the window — this is where available slots are "converted into" a meeting
   (marked BUSY and associated via the `slot_meeting` join table). Cancelling
-  (`DELETE /api/meetings/{meetingId}`, organizer only → 403 otherwise) releases booked slots.
+  (`POST /api/meetings/{meetingId}/cancel`, organizer only → 403 otherwise) releases booked
+  slots — a POST action rather than DELETE, since nothing is deleted (the meeting transitions to
+  CANCELLED and stays retrievable) and RFC 9110 gives a DELETE request body no semantics.
 - **Decision & trade-off, silent skip**: the planning brief for this model contradicted itself on
   what happens when a participant lacks free coverage at confirmation time (409-and-block vs.
   skip-and-confirm). The skip version won — a participant already booked elsewhere shouldn't

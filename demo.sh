@@ -182,10 +182,10 @@ section "Voting again on a meeting that's no longer PROPOSED → 409"
 call POST "/api/meetings/$MEETING_ID/participants/$CAROL_ID/vote" '{"vote":"YES"}'
 
 section "Non-organizer tries to cancel the meeting → 403"
-call DELETE "/api/meetings/$MEETING_ID" "{\"userId\":$BOB_ID}"
+call POST "/api/meetings/$MEETING_ID/cancel" "{\"userId\":$BOB_ID}"
 
 section "Organizer cancels the CONFIRMED meeting — booked slots go back to FREE"
-call DELETE "/api/meetings/$MEETING_ID" "{\"userId\":$ALICE_ID}"
+call POST "/api/meetings/$MEETING_ID/cancel" "{\"userId\":$ALICE_ID}"
 call GET "/api/users/$ALICE_ID/slots"
 
 # ── 4. a required NO cancels immediately ────────────────────────────────────────

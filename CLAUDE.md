@@ -192,7 +192,7 @@ DELETE /api/users/{userId}/slots/{slotId}                     delete slot
 
 POST   /api/meetings                                          propose a meeting (PROPOSED)
 GET    /api/meetings/{meetingId}                               get meeting
-DELETE /api/meetings/{meetingId}                               cancel meeting (organizer only; body: {userId})
+POST   /api/meetings/{meetingId}/cancel                        cancel meeting (organizer only; body: {userId})
 POST   /api/meetings/{meetingId}/participants/{userId}/vote   cast a vote (body: {vote})
 GET    /api/meetings/availability                              find free windows across users (userIds, from, to params)
 ```

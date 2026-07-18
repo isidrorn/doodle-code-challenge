@@ -200,14 +200,16 @@ curl -s -w "\n%{http_code}\n" -X POST "$BASE/api/meetings/1/participants/$BOB/vo
   -H "Content-Type: application/json" \
   -d '{"vote":"YES"}'
 
-# Cancel a meeting — only the organizer can, and the body identifies the caller.
-# If it was CONFIRMED, every booked slot goes back to FREE.
-curl -s -w "\n%{http_code}\n" -X DELETE "$BASE/api/meetings/1" \
+# Cancel a meeting — a POST action, not DELETE: nothing is deleted (the meeting transitions to
+# CANCELLED and stays retrievable), and RFC 9110 gives a DELETE body no semantics anyway.
+# Only the organizer can cancel; the body identifies the caller. If the meeting was CONFIRMED,
+# every booked slot goes back to FREE.
+curl -s -w "\n%{http_code}\n" -X POST "$BASE/api/meetings/1/cancel" \
   -H "Content-Type: application/json" \
   -d "{\"userId\":$ALICE}"
 
 # Non-organizer tries to cancel → 403
-curl -s -w "\n%{http_code}\n" -X DELETE "$BASE/api/meetings/1" \
+curl -s -w "\n%{http_code}\n" -X POST "$BASE/api/meetings/1/cancel" \
   -H "Content-Type: application/json" \
   -d "{\"userId\":$BOB}"
 

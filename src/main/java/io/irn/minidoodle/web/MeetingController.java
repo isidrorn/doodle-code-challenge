@@ -13,7 +13,6 @@ import java.time.Instant;
 import java.util.List;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.HttpStatus;
-import org.springframework.web.bind.annotation.DeleteMapping;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
@@ -63,8 +62,13 @@ public class MeetingController {
         return meetingMapper.toResponse(meetingService.vote(meetingId, userId, request.vote()));
     }
 
-    /** Cancels a meeting; the body's userId must be the organizer (403 otherwise). */
-    @DeleteMapping("/{meetingId}")
+    /**
+     * Cancels a meeting; the body's userId must be the organizer (403 otherwise). A POST action
+     * endpoint, deliberately not DELETE: RFC 9110 gives a DELETE request body no semantics
+     * (intermediaries may drop it), and nothing is deleted anyway — the meeting transitions to
+     * CANCELLED and stays retrievable, the same shape of state transition as {@link #vote}.
+     */
+    @PostMapping("/{meetingId}/cancel")
     @ResponseStatus(HttpStatus.NO_CONTENT)
     public void cancel(@PathVariable Long meetingId, @Valid @RequestBody MeetingCancelRequest request) {
         meetingService.cancel(meetingId, request.userId());

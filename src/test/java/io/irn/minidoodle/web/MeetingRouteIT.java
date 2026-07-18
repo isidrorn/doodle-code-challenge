@@ -373,12 +373,8 @@ class MeetingRouteIT {
     }
 
     private void cancelMeeting(Long meetingId, Long callerUserId, HttpStatus expected) {
-        HttpHeaders headers = new HttpHeaders();
-        headers.setContentType(MediaType.APPLICATION_JSON);
-        var req = new HttpEntity<>(new MeetingCancelRequest(callerUserId), headers);
-
-        ResponseEntity<String> res = restTemplate.exchange(
-                "/api/meetings/{id}", HttpMethod.DELETE, req, String.class, meetingId);
+        ResponseEntity<String> res = restTemplate.postForEntity(
+                "/api/meetings/{id}/cancel", new MeetingCancelRequest(callerUserId), String.class, meetingId);
 
         assertThat(res.getStatusCode()).isEqualTo(expected);
     }
