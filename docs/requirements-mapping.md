@@ -3,7 +3,7 @@
 A requirement-by-requirement account of how the take-home brief is implemented, and where the
 decisions and trade-offs behind each piece are recorded. The brief itself isn't republished in
 this repo (take-home exercises generally aren't meant to be) — requirements are quoted here only
-as short fragments, the same convention [`spec-review.md`](spec-review.md) uses. For *how* this
+as short fragments, the same convention [`spec-review.md`](decisions/spec-review.md) uses. For *how* this
 codebase is built in general (architecture, conventions, principles), see
 [`conventions.md`](conventions.md); this file is only about *what was asked and where it lives*.
 
@@ -23,7 +23,7 @@ codebase is built in general (architecture, conventions, principles), see
   size with `endTime` derived server-side; that was reversed because it both under-delivered the
   requirement and made the parameter dangerous (a config change could invalidate stored rows).
   The grid now validates new writes only and never derives data, so changing it cannot corrupt
-  existing rows — the full argument is [`design-decisions-v7.md`](design-decisions-v7.md).
+  existing rows — the full argument is [`design-decisions-v7.md`](decisions/design-decisions-v7.md).
 - **Delete / modify** — `DELETE` and `PATCH /api/users/{userId}/slots/{slotId}`. `PATCH` semantics:
   `startTime` alone shifts the slot preserving its length, `endTime` alone resizes it, both
   together define a new interval. A slot booked into a `CONFIRMED` meeting refuses mutation with
@@ -33,7 +33,7 @@ codebase is built in general (architecture, conventions, principles), see
 - **Integrity under concurrency** — overlap checking and insertion are serialized per calendar via
   a `PESSIMISTIC_WRITE` lock on the parent `Calendar` row (a row lock on existing slots can't
   close the phantom gap for a new `INSERT`). **Trade-off** (flagged in
-  [`spec-review.md`](spec-review.md), issue 2): the lock is coarse — all of one user's slot writes
+  [`spec-review.md`](decisions/spec-review.md), issue 2): the lock is coarse — all of one user's slot writes
   serialize against each other — accepted at this scale over Postgres-only exclusion constraints.
 - **Proven by**: `SlotServiceTest`, `SlotRouteIT` (including an 8-thread race over real HTTP
   asserting exactly one `201`), `SlotRepositoryTest`.
@@ -56,11 +56,11 @@ codebase is built in general (architecture, conventions, principles), see
   what happens when a participant lacks free coverage at confirmation time (409-and-block vs.
   skip-and-confirm). The skip version won — a participant already booked elsewhere shouldn't
   permanently block everyone else — documented with both sides in
-  [`design-decisions-v2.md`](design-decisions-v2.md).
+  [`design-decisions-v2.md`](decisions/design-decisions-v2.md).
 - **Decision, whole-slot booking**: meetings book whole slots, and only slots *fully contained* in
   the meeting window; with client-chosen durations a slot overshooting the window is skipped
   rather than partially booked (slot splitting is deliberately out of scope) —
-  [`design-decisions-v7.md`](design-decisions-v7.md).
+  [`design-decisions-v7.md`](decisions/design-decisions-v7.md).
 - **Decision, code-level invariant**: "a slot is in at most one CONFIRMED meeting" is enforced in
   `MeetingService.confirm()` (which only books slots it verified are FREE), not as a DB
   constraint — simpler, and the confirm path is already serialized by its transaction.
@@ -74,7 +74,8 @@ codebase is built in general (architecture, conventions, principles), see
 Implemented literally: `Calendar` is a JPA entity (`User 1──1 Calendar 1──N Slot`) that never
 appears as a REST resource — slots are addressed through `/api/users/{userId}/slots`, and no
 response DTO exposes a calendar id. The cascade design around it (persist through the `User`
-aggregate) is documented in [`CLAUDE.md`](CLAUDE.md) and `spec-review.md`.
+aggregate) is documented in [`conventions.md`](conventions.md) and
+[`spec-review.md`](decisions/spec-review.md).
 
 ## Querying free/busy slots, aggregated view for a time frame
 
@@ -85,7 +86,7 @@ aggregate) is documented in [`CLAUDE.md`](CLAUDE.md) and `spec-review.md`.
   (an unfiltered result pretending to be filtered is worse than an error).
 - **Across users** — `GET /api/meetings/availability?userIds=&from=&to=` returns, for every grid
   window in the range, which of the requested users are free — the "suggest a time that works"
-  behavior a scheduling product actually needs. **Decisions** ([`design-decisions-v5.md`](design-decisions-v5.md),
+  behavior a scheduling product actually needs. **Decisions** ([`design-decisions-v5.md`](decisions/design-decisions-v5.md),
   reworked for variable-length slots in v7): returns *who's free per window* rather than
   collapsing to "windows where everyone is free" (required-vs-optional is the caller's concern);
   the range is capped at 2,000 windows so one request can't drive unbounded server-side work.
@@ -98,7 +99,8 @@ JPA/Hibernate over PostgreSQL (docker-compose profile) with Flyway-owned schema 
 `ddl-auto: validate`; H2 in-memory for tests/local. **Decisions**: migrations were retrofitted
 from the real schema history and say so openly; Postgres/H2 behavioral divergence (bind-parameter
 typing) is handled with explicit casts and a smoke-test-on-Postgres rule —
-[`design-decisions-v4.md`](design-decisions-v4.md) and the JPQL notes in `CLAUDE.md`.
+[`design-decisions-v4.md`](decisions/design-decisions-v4.md) and the JPQL notes in
+[`conventions.md`](conventions.md).
 
 ## Scale
 
@@ -106,19 +108,19 @@ typing) is handled with explicit casts and a smoke-test-on-Postgres rule —
 
 - Every list endpoint is paginated (`page`/`size`, capped, envelope response) — and paginated *in
   SQL*: the slot search is deliberately two queries because a fetch join plus LIMIT/OFFSET would
-  silently paginate in memory ([`design-decisions-v4.md`](design-decisions-v4.md)).
+  silently paginate in memory ([`design-decisions-v4.md`](decisions/design-decisions-v4.md)).
 - Index on `slot(calendar_id, start_time)` behind the overlap/range queries.
 - Locking is scoped per calendar so unrelated users never serialize against each other
-  ([`spec-review.md`](spec-review.md), issue 2 — including why not finer).
+  ([`spec-review.md`](decisions/spec-review.md), issue 2 — including why not finer).
 - Hot paths avoid O(n) collection loads (a slot insert doesn't load the user's existing slots —
-  `spec-review.md`, issue 4).
+  `decisions/spec-review.md`, issue 4).
 - The availability walk is bounded (window cap) and does one query per requested user.
 
 ## Instructions and "plus" items
 
 - **Runnable with docker-compose, dependencies included** — `docker-compose up` starts PostgreSQL
   (healthcheck-gated) and the app via a multi-stage `Dockerfile`; no other setup.
-- **Document how to consume the service** — [`README.md`](README.md) (run/consume/test),
+- **Document how to consume the service** — [`README.md`](../README.md) (run/consume/test),
   [`api-examples.md`](api-examples.md) (copy-pasteable curl for every route including error
   cases), [`demo.sh`](demo.sh) (scripted end-to-end walkthrough), Swagger UI at
   `/swagger-ui.html`.
@@ -129,7 +131,7 @@ typing) is handled with explicit casts and a smoke-test-on-Postgres rule —
   GitHub Actions workflow runs the full suite on every push (badge in the README).
 - **Regular, meaningful commits** — the git history is the development record, kept honest
   (including passes that reversed earlier decisions); each significant pass also has a durable
-  decision log (`spec-review.md`, `design-decisions-v2..v7.md`) so the reasoning outlives the
+  decision log (`decisions/spec-review.md`, `decisions/design-decisions-v2..v7.md`) so the reasoning outlives the
   diffs.
 - **"Design and tech decision making" / "incomplete is fine if explained"** — the decision-log
   series exists precisely for this; known gaps are stated rather than left to be discovered, see
