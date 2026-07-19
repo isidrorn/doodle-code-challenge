@@ -4,7 +4,7 @@ Companion to [`spec-review.md`](spec-review.md) and `design-decisions-v2..v5.md`
 don't merge them. This one converts the entire web layer from WebMvc.fn functional routes
 (`RouterFunction` + `HandlerFunction`, the shape every earlier pass worked within) to idiomatic
 annotated controllers, and deletes the hand-rolled infrastructure the functional style had made
-necessary. [`conventions.md`](conventions.md) describes the resulting target state as the
+necessary. [`conventions.md`](../conventions.md) describes the resulting target state as the
 normative reference.
 
 ## Why

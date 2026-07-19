@@ -114,7 +114,7 @@ MEETING_START="$S1_START"
 MEETING_END=$(iso_from_epoch $((GRID_START + 2 * SLOT)))
 
 section "Bulk-create two consecutive 30-min slots for Alice and one 60-min slot for Bob (same window)"
-echo "(slot durations are client-chosen — the grid only validates the boundaries, see design-decisions-v7.md)"
+echo "(slot durations are client-chosen — the grid only validates the boundaries, see decisions/design-decisions-v7.md)"
 call POST "/api/users/$ALICE_ID/slots" "{\"slots\":[{\"startTime\":\"$S1_START\",\"endTime\":\"$S2_START\"},{\"startTime\":\"$S2_START\",\"endTime\":\"$MEETING_END\"}]}"
 ALICE_SLOT1=$(jq -r .[0].id <<<"$HTTP_BODY")
 
@@ -122,7 +122,7 @@ call POST "/api/users/$BOB_ID/slots" "{\"slots\":[{\"startTime\":\"$S1_START\",\
 
 echo
 echo "(Carol gets no slots at all — used below to show a missing-coverage participant"
-echo " doesn't block meeting confirmation, see design-decisions-v2.md)"
+echo " doesn't block meeting confirmation, see decisions/design-decisions-v2.md)"
 
 section "List Alice's slots"
 call GET "/api/users/$ALICE_ID/slots"
@@ -156,7 +156,7 @@ call PATCH "/api/users/$ALICE_ID/slots/$ALICE_SLOT1" '{"status":"NOT_A_STATUS"}'
 section "Availability: find a time that works — Alice, Bob, and Carol"
 echo "(Carol has no slots at all, so she never shows up in freeUserIds — this is the one piece of"
 echo " core Doodle behavior — suggest a time, don't require one already picked — the rest of the"
-echo " API didn't cover on its own. See design-decisions-v5.md.)"
+echo " API didn't cover on its own. See decisions/design-decisions-v5.md.)"
 call GET "/api/meetings/availability?userIds=$ALICE_ID,$BOB_ID,$CAROL_ID&from=$MEETING_START&to=$MEETING_END"
 
 section "Validation: availability query with an unaligned 'from' → 400, not 500"

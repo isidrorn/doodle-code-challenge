@@ -6,7 +6,7 @@ against a live instance, see [`demo.sh`](demo.sh) instead — this file is for b
 copy-pasting one request at a time.
 
 Start the app first (no Maven wrapper is checked into this repo — use a local Maven install with a
-**JDK 21** toolchain; see the [README](README.md#run) for why):
+**JDK 21** toolchain; see the [README](../README.md#run) for why):
 ```bash
 # With docker-compose (PostgreSQL)
 docker-compose up
