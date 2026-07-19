@@ -3,9 +3,10 @@
 This file is the **normative reference** for how code in this repository is written: architecture,
 coding conventions, design principles, and working practices. It is declarative — "this is how we
 do things" — not a decision log. The *why* behind non-obvious choices lives in the decision logs
-([`spec-review.md`](spec-review.md), [`design-decisions-v2.md`](design-decisions-v2.md) through
-v5), which are historical records and are never rewritten. When a practice changes, this file is
-updated in the same commit as the change that breaks it.
+under [`decisions/`](decisions/) ([`spec-review.md`](decisions/spec-review.md) through
+[`design-decisions-v8.md`](decisions/design-decisions-v8.md) — see "Git and documentation" below
+for which log covers what), which are historical records and are never rewritten. When a practice
+changes, this file is updated in the same commit as the change that breaks it.
 
 ## Stack and baseline
 
@@ -51,9 +52,16 @@ config/       configuration properties, seeding, OpenAPI config
   **Structural validation** (non-null, non-blank, well-formed email, `@Size` caps) belongs on the
   DTO; **business-rule validation** (grid alignment, overlap, state-machine legality) belongs in
   the service. Every free-text field carries a `@Size` cap that matches its DB column size
-  exactly — an over-long value is a 400 at the boundary, never a database error.
+  exactly — an over-long value is a 400 at the boundary, never a database error. (`SlotUpdateRequest`
+  is the one DTO with no constraints at all — every field optional — so its controller method skips
+  `@Valid`.)
+- Controller method parameters carry constraints directly (`@Min(0) int page`, `@Max(100) int size`,
+  `@NotEmpty List<Long> userIds`) — Spring's built-in method validation raises
+  `HandlerMethodValidationException` → 400, no `@Validated` needed. Out-of-range pagination is
+  rejected with 400, never silently clamped.
 - Path variables are typed method parameters (`@PathVariable Long userId`) — Spring's type
-  coercion turns malformed ids into 400s; no hand-rolled parsing.
+  coercion turns malformed ids into `MethodArgumentTypeMismatchException` → 400; no hand-rolled
+  parsing.
 
 ### Error handling
 
@@ -63,6 +71,16 @@ config/       configuration properties, seeding, OpenAPI config
   `ForbiddenException` — `io.irn.minidoodle.exception`); the advice is the single place that maps
   each to a status code. No Spring Web type appears below the web layer — services stay reusable
   behind any delivery mechanism, and the status mapping lives where HTTP lives.
+- `GlobalExceptionHandler` **extends `ResponseEntityExceptionHandler` deliberately**: the class has
+  a catch-all `@ExceptionHandler(Exception.class)` → 500, and without the parent's inherited,
+  more-specific handlers, that catch-all would swallow Spring MVC's own exceptions
+  (`HttpRequestMethodNotSupportedException`, `HandlerMethodValidationException`,
+  `MissingServletRequestParameterException`, ...) and turn canonical 405s/400s into 500s. The
+  overrides in the class only sharpen detail messages — don't add a new `@ExceptionHandler` for an
+  exception type the parent already handles (same-type handlers in one advice are an ambiguity
+  error at startup); override the parent's protected method instead. The advice keeps a
+  `ResponseStatusException` handler purely as a framework safety net — application code must never
+  throw it.
 - Status code discipline:
   - `400` — malformed or invalid input (including out-of-range pagination params: reject, don't
     silently clamp).
@@ -75,14 +93,26 @@ config/       configuration properties, seeding, OpenAPI config
 ### API design
 
 - Plain REST, standard verbs. Reads are `GET` with query parameters; writes take a JSON body.
+- `GET /api/meetings/availability` coexists with `GET /api/meetings/{meetingId}` because Spring's
+  path matching always prefers the literal segment over the template — no custom ordering needed.
 - Every collection endpoint is paginated: `page`/`size` query params (default `0`/`20`, size
   capped at 100, 400 when out of range) returning a `PageResponse<T>` envelope — never a bare
-  array.
+  array. `SlotService.query()` composes `searchIds()` + `findByIdInWithMeetings()` (see "Domain
+  and persistence" below) into a `PageImpl` using the first query's total count — any new
+  paginated query needing an eager collection needs the same two-step shape; don't add
+  `@EntityGraph` directly to a `Pageable`-accepting query.
 - Timestamps are `Instant`, serialized as ISO-8601 UTC. No local times, no time zones in the API.
-- **Configuration validates; it never derives domain data.** The time grid
-  (`scheduling.time-grid-minutes`) constrains which boundaries a client may submit — it is never
-  used to compute or reinterpret stored values, so changing it cannot corrupt existing rows.
-  Slot intervals are client-chosen data, validated at write time.
+- **Configuration validates; it never derives domain data.** The time grid (`TimeGridConfig`,
+  `scheduling.time-grid-minutes`, default 30) requires every client-supplied boundary — slot
+  start/end (bulk create and `PATCH`), meeting start/end, availability `from`/`to` — to satisfy
+  `epochSecond % (gridMinutes * 60) == 0`, checked in `SlotService` and `MeetingService`. It's never
+  used to compute or reinterpret stored values (no computed `endTime`), so changing it cannot
+  corrupt existing rows — a status-only `PATCH` deliberately skips time validation for exactly this
+  reason. Meetings book *whole* slots and only slots *fully contained* in the meeting window; a
+  participant whose free slot overshoots the window is silently skipped. Slot intervals themselves
+  are client-chosen data, validated at write time. See
+  [`design-decisions-v7.md`](decisions/design-decisions-v7.md) before touching `TimeGridConfig`,
+  slot creation/`PATCH` validation, or `MeetingService.availability()`.
 - Bulk operations are transactional all-or-nothing: one invalid entry rolls back the whole batch.
   No partial-success/207 semantics.
 
@@ -90,11 +120,21 @@ config/       configuration properties, seeding, OpenAPI config
 
 - `@Service @Transactional` classes are the only place business rules live. The transaction
   boundary is the service method — one use case, one transaction.
-- State machines are driven inside a single service method (e.g. `MeetingService.vote()` handles
-  vote → cancel/confirm transitions atomically), never spread across web-layer calls.
+- State machines are driven inside a single service method, never spread across web-layer calls. A
+  `Meeting` is created `PROPOSED` with zero slots booked; each `MeetingParticipant` carries a
+  `ParticipantRole` (`ORGANIZER`/`REQUIRED`/`OPTIONAL`) and a `Vote` (`PENDING`/`YES`/`NO`), with
+  the organizer's vote implicitly `YES` from construction. `MeetingService.vote()` handles the
+  transitions atomically: a `REQUIRED` participant voting `NO` cancels the meeting immediately;
+  once every `REQUIRED` participant has voted `YES`, `MeetingService.confirm()` books each
+  participant's `FREE` slots for the window *only if* `SlotRepository.findFreeSlotsCovering(...)`
+  returns a full, gap-free chain covering `[startTime, endTime)` — a participant without one is
+  skipped silently rather than blocking confirmation for everyone else.
+  `Meeting.addSlot()` does the book-and-mark-BUSY-and-associate in one call; `Meeting.releaseSlots()`
+  (used by `MeetingService.cancel()` on a `CONFIRMED` meeting) is the inverse.
 - Where the brief or the domain is ambiguous, the resolution is recorded in a decision log and the
-  code points at it — see `design-decisions-v2.md` for the propose/vote/confirm contradiction and
-  why confirmation silently skips participants without a free covering slot chain.
+  code points at it — see [`design-decisions-v2.md`](decisions/design-decisions-v2.md) for the
+  propose/vote/confirm contradiction and why confirmation silently skips participants without a
+  free covering slot chain.
 
 ## Domain and persistence
 
@@ -104,6 +144,12 @@ config/       configuration properties, seeding, OpenAPI config
 - **Cascade direction is downward only**: `User` → `Calendar` → `Slot`. New object graphs are
   persisted via `userRepository.save(user)`; saving from the `Calendar` or `Slot` side does not
   cascade upward and fails.
+- `Slot ─ Meeting` is `@ManyToMany` via the `slot_meeting` join table (owned by `Meeting`). A slot
+  can sit in several `PROPOSED` meetings at once but at most one `CONFIRMED` one — not a DB
+  constraint, enforced in code by `MeetingService.confirm()` only ever booking slots it already
+  confirmed are `FREE`. `Slot.hasConfirmedMeeting()` is what `SlotService.update()`/`delete()` check
+  before allowing a mutation (409 if true) — a slot in a merely `PROPOSED` meeting can still be
+  freely edited, since nothing has actually reserved it yet.
 - **Concurrency**:
   - `Slot` carries `@Version` (optimistic locking); a losing writer maps to 409.
   - Creating/moving slots takes a `PESSIMISTIC_WRITE` lock on the parent `Calendar` row, not on
@@ -113,19 +159,28 @@ config/       configuration properties, seeding, OpenAPI config
     mocked approximations.
 - `spring.jpa.open-in-view` is **false**, deliberately. Anything read after the transaction ends
   (mappers, typically) must be fetched eagerly by the repository method, via
-  `@EntityGraph(attributePaths = ...)`. A `LazyInitializationException` is fixed by fetching what's
-  needed — never by re-enabling open-in-view.
+  `@EntityGraph(attributePaths = ...)` — see `SlotRepository.findByIdInWithMeetings`/
+  `findByUserIdAndSlotId` (`attributePaths = "meetings"`, since `SlotMapper` reads
+  `slot.getMeetings()`) and `MeetingRepository.findById` (`attributePaths = {"participants",
+  "participants.user"}`, since `MeetingMapper` reads `participant.getUser().getName()`). A
+  `LazyInitializationException` is fixed by fetching what's needed — never by re-enabling
+  open-in-view.
   - Caveat: `@EntityGraph` is a JPA *fetch graph* — associations not listed are demoted to LAZY
-    even if their mapping says EAGER. Graphs list exactly what the post-transaction reader needs,
+    even if their mapping says EAGER. This is why `MeetingRepository.findById()`'s graph omits
+    `"slots"` — `MeetingMapper` doesn't read it — even though `MeetingService.confirm()`/`cancel()`
+    still mutate `meeting.getSlots()` from inside the active transaction, where lazy loading works
+    regardless of what's in the graph. Graphs list exactly what the post-transaction reader needs,
     nothing more.
 - **Pagination + collection fetch joins never combine in one query.** Hibernate would silently
   paginate in memory. The pattern is two queries: page of ids with real SQL LIMIT/OFFSET, then load
   those entities with the collection fetched (`searchIds()` + `findByIdInWithMeetings()` in
   `SlotRepository` is the reference implementation).
 - **JPQL and parameter typing**: a bind parameter used only in a bare `(:param is null or ...)`
-  check fails on Postgres (parameter type can't be inferred) while passing on H2. Optional-filter
-  parameters always get an explicit `cast(:param as <type>)` in the null-check branch, and any new
-  query of this shape is verified against `docker-compose up`.
+  check fails on Postgres (its extended query protocol resolves a parameter's type at parse time
+  from the surrounding SQL; a standalone `? IS NULL` gives it nothing to infer from) while passing
+  on H2, which doesn't enforce this. Optional-filter parameters always get an explicit
+  `cast(:param as <type>)` in the null-check branch (see `SlotRepository.searchIds`/`existsOverlap`),
+  and any new query of this shape is verified against `docker-compose up`, not just `mvn test`.
 - Hot-path awareness: per-request code paths must not force-load collections they don't need
   (e.g. new slots are constructed with the FK set directly rather than via `Calendar.addSlot()`,
   which would load every existing slot).
@@ -139,6 +194,9 @@ config/       configuration properties, seeding, OpenAPI config
   are Postgres SQL.
 - Consequence: any JPA mapping change ships with a new migration in the same commit, and is
   verified against `docker-compose up` — H2 profiles cannot catch a mismatch.
+- See [`design-decisions-v4.md`](decisions/design-decisions-v4.md) for why `flyway-core` alone
+  isn't enough to make Flyway's autoconfiguration activate on Spring Boot 4 — `spring-boot-starter-flyway`
+  is needed too.
 
 ## Testing
 
@@ -161,24 +219,66 @@ Three layers, each testing what only it can test:
   `TestRestTemplate` lives in `org.springframework.boot.resttestclient` and needs
   `@AutoConfigureTestRestTemplate` explicitly.
 - Run matrix: `mvn test` runs `*Test` only; `mvn test -Dtest=*Test,*IT` runs everything (no
-  failsafe plugin is configured). Touching locking code means re-running the concurrency IT
-  several times — a broken lock shows up as occasional, not deterministic, failures.
+  failsafe plugin is configured). If you touch the locking in `SlotService.create()`/`update()`,
+  re-run `SlotRouteIT.createSlots_concurrentOverlappingRequests_onlyOneSucceeds` specifically
+  (`mvn test -Dtest=SlotRouteIT#createSlots_concurrentOverlappingRequests_onlyOneSucceeds`) a few
+  times in a row — a broken lock only shows up as occasional extra `201`s, not a deterministic
+  failure. 127 tests total as of the review-hardening pass
+  ([`design-decisions-v8.md`](decisions/design-decisions-v8.md)); CI
+  (`.github/workflows/ci.yml`) runs the full `*Test,*IT` pattern on every push — keep that pattern
+  in sync if test naming conventions ever change.
+- `spring-boot-restclient` is an explicit test dependency in `pom.xml` because
+  `spring-boot-resttestclient` does not pull it in transitively, and
+  `TestRestTemplateTestAutoConfiguration` needs `RestTemplateBuilder` on the classpath to even
+  evaluate its conditions.
 
 ## Git and documentation
 
 - **Conventional commits**: `feat:`, `fix:`, `docs:`, with an optional scope (`fix(web): ...`),
   imperative mood, body explaining *why* when the subject line isn't enough.
 - Documentation is layered by audience:
-  - `README.md` — the front door for a reviewer: what this is, how to run it, how to consume the
-    API, known limitations.
-  - `requirements-mapping.md` — requirement-by-requirement traceability: what was asked, where it
-    is implemented, which decision log argues it. Kept current, like this file.
+  - [`README.md`](../README.md) — the front door for a reviewer: what this is, how to run it, how
+    to consume the API, known limitations.
+  - [`requirements-mapping.md`](requirements-mapping.md) — requirement-by-requirement
+    traceability: what was asked, where it is implemented, which decision log argues it. Kept
+    current, like this file, updated in the same commit as any change that alters
+    requirement-visible behavior.
   - `conventions.md` (this file) — normative "how we work."
-  - `spec-review.md` / `design-decisions-v*.md` — append-only historical records of review passes
-    and design decisions. New decisions get a new log; old logs are never edited to match the
-    present.
-  - `api-examples.md` / `demo.sh` — runnable, copy-pasteable API walkthroughs, kept in sync with
-    the actual routes.
+  - [`decisions/`](decisions/) — append-only historical records, one per review/design pass; never
+    merged or edited to match the present, and don't re-fix anything a log describes as already
+    fixed:
+    - [`spec-review.md`](decisions/spec-review.md) (v1) — spec-compliance pass on the original
+      single-slot meeting model: dead bean validation, the TOCTOU race and the calendar-level lock
+      that fixed it, an O(n) collection load on every slot create.
+    - [`design-decisions-v2.md`](decisions/design-decisions-v2.md) — the propose/vote/confirm
+      meeting-model refactor; read before touching `MeetingService.vote()`/`confirm()` — it
+      documents a real contradiction in the brief and which behavior won.
+    - [`design-decisions-v3.md`](decisions/design-decisions-v3.md) — the rebrand to `minidoodle`
+      and an input-validation hardening pass (a bad-typed path parameter 500ing instead of
+      400ing).
+    - [`design-decisions-v4.md`](decisions/design-decisions-v4.md) — pagination (the two-query
+      shape above) and Flyway for the docker-compose/Postgres profile.
+    - [`design-decisions-v5.md`](decisions/design-decisions-v5.md) — the cross-participant
+      availability search; read before touching `MeetingService.availability()` — explains the
+      per-user reuse of `findFreeSlotsCovering` and why grid-aligned fixed-duration slots reduced
+      it to set membership at the time.
+    - [`design-decisions-v6.md`](decisions/design-decisions-v6.md) — the conversion from
+      WebMvc.fn functional routes to `@RestController`: which hand-rolled mechanisms were deleted
+      and what replaced each, plus the `ResponseEntityExceptionHandler` wiring rationale. v1–v5
+      reference the pre-v6 web machinery (`RequestValidator`, `RouterExceptionFilter`, handlers)
+      in their historical context — that's intentional.
+    - [`design-decisions-v7.md`](decisions/design-decisions-v7.md) — per-slot durations on a
+      validation-only time grid, reversing v2's fixed-duration model; read before touching
+      `TimeGridConfig`, slot creation/`PATCH` validation, or `MeetingService.availability()`. (v2–v5
+      describe the fixed-duration era in their historical context; same rule, don't "fix" them.)
+    - [`design-decisions-v8.md`](decisions/design-decisions-v8.md) — the pre-delivery
+      review-hardening pass: domain exceptions replacing `ResponseStatusException`, the `POST
+      /cancel` rationale, length caps + unique email (read its migration lesson before writing any
+      migration that adds a constraint over existing data), and CI. (v1–v7 mention
+      `ResponseStatusException`-throwing services and the DELETE cancel route in their historical
+      context; same rule applies.)
+  - [`api-examples.md`](api-examples.md) / [`demo.sh`](demo.sh) — runnable, copy-pasteable API
+    walkthroughs, kept in sync with the actual routes.
 
 ## Engineering principles
 

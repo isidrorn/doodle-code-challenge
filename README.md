@@ -7,7 +7,7 @@ calendar, propose meetings against other users, and a meeting confirms once ever
 participant votes yes — booking each participant's free slots automatically. Built with Spring Boot
 4.1 and Java 21.
 
-Reviewing this against the original brief? [`requirements-mapping.md`](requirements-mapping.md)
+Reviewing this against the original brief? [`requirements-mapping.md`](docs/requirements-mapping.md)
 traces every requirement to its implementation, with the decisions and trade-offs behind each.
 
 ## What it does
@@ -16,7 +16,7 @@ traces every requirement to its implementation, with the decisions and trade-off
   whatever time frame the user says it is), modify or delete them, mark them busy/free. A
   configurable time grid (`scheduling.time-grid-minutes`, default 30) validates every boundary —
   on a 5-minute grid, `09:05` is a valid boundary and `09:12` isn't. See
-  [`design-decisions-v7.md`](design-decisions-v7.md).
+  [`design-decisions-v7.md`](docs/decisions/design-decisions-v7.md).
 - **Meeting scheduling** — propose a meeting with a title, description, and participants (each with
   a role — organizer / required / optional); once every required participant votes yes, the meeting
   confirms and books each participant's free slots for the window automatically.
@@ -39,38 +39,25 @@ User  1 ──── 1  Calendar  1 ──── N  Slot  N ──── M  Meet
                                               N ──── 1  User
 ```
 
-- `User` cascades `ALL` to its `Calendar`, which cascades `ALL` to its `Slot`s. Always persist
-  through `userRepository.save(user)` when the user is new — saving from the `Calendar` or `Slot`
-  side does not cascade upward and throws `TransientPropertyValueException`.
-- **Slots have client-chosen durations; the time grid only validates boundaries.**
-  `scheduling.time-grid-minutes` (default 30, `TimeGridConfig`) requires every client-supplied
-  boundary — slot start/end, meeting start/end, availability range — to be a grid multiple
-  (`epochSecond % (gridMinutes * 60) == 0`). The grid never derives or rewrites stored data, so
-  changing the parameter can't corrupt existing rows: loosening it keeps everything valid,
-  tightening it only gates future writes ([`design-decisions-v7.md`](design-decisions-v7.md)).
-- A `Slot` can belong to several `PROPOSED` meetings at once, but at most one `CONFIRMED` one — that
-  constraint isn't enforced at the DB level (the `slot_meeting` join table has no such check);
-  `MeetingService.confirm()` enforces it in code, by only ever calling `Meeting.addSlot()` on slots
-  it already confirmed are `FREE`.
-- A `Meeting` starts `PROPOSED` with no slots booked. Each participant is a `MeetingParticipant`
-  with a `ParticipantRole` (`ORGANIZER` / `REQUIRED` / `OPTIONAL`) and a `Vote`
-  (`PENDING` / `YES` / `NO`) — the organizer's vote is implicitly `YES` from creation. Once every
-  `REQUIRED` participant has voted `YES`, the meeting confirms and books whichever participants have
-  a full, contiguous `FREE` cover of `[startTime, endTime)` — see
-  [`design-decisions-v2.md`](design-decisions-v2.md) for why a participant *without* that coverage
-  doesn't block confirmation for everyone else. A `REQUIRED` participant voting `NO` cancels the
-  meeting immediately.
-- `Slot` carries an optimistic-locking `@Version`; two requests racing to book the same slot get a
-  409 from the second writer.
-- `SlotService.create()`/`update()` take a `PESSIMISTIC_WRITE` lock on the *parent* `Calendar` row
-  (`CalendarRepository.findByOwnerIdForUpdate`) rather than on individual `Slot` rows — a row-level
-  lock on existing rows can't close a phantom-read gap for a brand-new `INSERT`, so the overlap
-  check and the write are serialized per user's calendar instead. `SlotService.create()` builds each
-  new `Slot` via a `Slot(Calendar, Instant, Instant)` constructor that sets the FK directly, rather
-  than going through `Calendar.addSlot()` — the latter mutates (and thus forces a full load of)
-  `Calendar.slots`, which would mean reloading every existing slot for that user on every creation.
-  See [`spec-review.md`](spec-review.md#2-toctou-race-between-the-overlap-check-and-the-insertupdate)
-  for how this was originally found and verified.
+- Cascades flow downward only, `User` → `Calendar` → `Slot` — new object graphs are always
+  persisted through the `User` aggregate.
+- Slots have client-chosen durations; a configurable time grid (`scheduling.time-grid-minutes`,
+  default 30) validates every boundary a client submits without ever deriving or rewriting stored
+  data, so changing it can't corrupt existing rows
+  ([`design-decisions-v7.md`](docs/decisions/design-decisions-v7.md)).
+- A slot can sit in several `PROPOSED` meetings at once but at most one `CONFIRMED` one, enforced
+  in code rather than at the database level.
+- A meeting starts `PROPOSED` with nothing booked; once every required participant votes yes, it
+  confirms and books whichever participants have full slot coverage of the window — a participant
+  without that coverage doesn't block confirmation for everyone else
+  ([`design-decisions-v2.md`](docs/decisions/design-decisions-v2.md)).
+- Optimistic locking (`@Version` on `Slot`) plus a calendar-level pessimistic lock on slot
+  create/update keep concurrent writers from double-booking or racing past the overlap check — see
+  [`spec-review.md`](docs/decisions/spec-review.md#2-toctou-race-between-the-overlap-check-and-the-insertupdate)
+  for how that race was originally found.
+
+The mechanics behind each of these — cascade exceptions, the exact locking strategy, entity-graph
+fetching — are documented in [`conventions.md`](docs/conventions.md), not repeated here.
 
 ## API routes
 
@@ -101,12 +88,12 @@ GET    /api/meetings/availability                             → find free wind
 
 Every path variable and request body is validated before it reaches business logic — a bad-typed id
 or a malformed/mistyped body returns 400 with a specific message, not a 500. See
-[`design-decisions-v3.md`](design-decisions-v3.md) and the "Input validation" section of
-[`api-examples.md`](api-examples.md).
+[`design-decisions-v3.md`](docs/decisions/design-decisions-v3.md) and the "Input validation" section of
+[`api-examples.md`](docs/api-examples.md).
 
 Every list/query endpoint is paginated: `?page=0&size=20` by default (size capped at 100), returning
 `{content, page, size, totalElements, totalPages}` rather than a bare array — see
-[`design-decisions-v4.md`](design-decisions-v4.md).
+[`design-decisions-v4.md`](docs/decisions/design-decisions-v4.md).
 
 ## Run
 
@@ -120,7 +107,7 @@ such as 26 — getters/builders/`@Slf4j` silently fail to generate, which shows 
 mvn spring-boot:run -Dspring-boot.run.profiles=local
 
 # With Docker (PostgreSQL) — includes the app and its database, no extra setup.
-# Schema is applied by Flyway (src/main/resources/db/migration); see design-decisions-v4.md.
+# Schema is applied by Flyway (src/main/resources/db/migration); see docs/decisions/design-decisions-v4.md.
 docker-compose up
 ```
 
@@ -129,11 +116,11 @@ slots each, in the same time window — check the logs for their generated `user
 
 ## Consume
 
-- [`api-examples.md`](api-examples.md) — a full set of copy-pasteable `curl` examples covering
+- [`api-examples.md`](docs/api-examples.md) — a full set of copy-pasteable `curl` examples covering
   users, slots (bulk create, all filter variants, the overlap-conflict case), input validation, and
   the full meeting propose → vote → confirm/cancel flow.
-- [`demo.sh`](demo.sh) — a runnable, self-contained walkthrough of the same flow end-to-end against
-  a live instance (`./demo.sh`, requires `curl` + `jq`); prints every request and response as it goes.
+- [`demo.sh`](docs/demo.sh) — a runnable, self-contained walkthrough of the same flow end-to-end against
+  a live instance (`./docs/demo.sh`, requires `curl` + `jq`); prints every request and response as it goes.
 - Swagger UI at `/swagger-ui.html` documents all routes.
 - Metrics: Prometheus-formatted metrics (including request latency percentiles) at
   `/actuator/prometheus`; health at `/actuator/health`.
@@ -185,7 +172,7 @@ locking in `SlotService` works, rather than just compiling.
 
 The full flow (bulk create, slot filtering, and propose → vote → confirm → cancel) is also
 smoke-tested against a real `docker-compose` Postgres instance, not just H2 — see
-[`design-decisions-v2.md`](design-decisions-v2.md) for why that matters for this codebase
+[`design-decisions-v2.md`](docs/decisions/design-decisions-v2.md) for why that matters for this codebase
 specifically (H2 and Postgres disagree on how they type-check certain bind parameters).
 
 ## Known limitations / trade-offs
@@ -199,49 +186,22 @@ incomplete solution as long as the reasoning is explained:
   real gap if this were exposed beyond a trusted network.
 
 (Pagination and schema migrations were both flagged here too until
-[`design-decisions-v4.md`](design-decisions-v4.md) addressed them; cross-participant availability
-was flagged until [`design-decisions-v5.md`](design-decisions-v5.md) did.)
+[`design-decisions-v4.md`](docs/decisions/design-decisions-v4.md) addressed them; cross-participant availability
+was flagged until [`design-decisions-v5.md`](docs/decisions/design-decisions-v5.md) did.)
 
 ## Design decisions & how this was validated
 
-A set of decision logs records how this implementation evolved and why, each covering a separate
-pass — they intentionally aren't merged into one:
-
-- [`spec-review.md`](spec-review.md) — the original spec-compliance pass against the take-home
-  brief: dead bean validation, a TOCTOU race in slot creation, meetings not exposing participants,
-  an O(n) collection load on every slot create, and the tests added to prove each fix.
-- [`design-decisions-v2.md`](design-decisions-v2.md) — the refactor to the current
-  propose/vote/confirm meeting model with system-wide slot duration and bulk slot creation,
-  including a contradiction in the brief that had to be resolved (what happens when a participant
-  lacks free slots at confirmation time) and the reasoning behind the choice made.
-- [`design-decisions-v3.md`](design-decisions-v3.md) — the rebrand to `minidoodle` and an
-  input-validation hardening pass closing a real bug (a bad-typed path parameter 500ing instead of
-  400ing).
-- [`design-decisions-v4.md`](design-decisions-v4.md) — pagination on every list/query endpoint (and
-  why it needed a two-query approach, not just an `@EntityGraph` on a `Pageable` query) and Flyway
-  for the docker-compose/Postgres profile, with migrations reconstructed from the actual schema
-  history rather than a single flattened snapshot.
-- [`design-decisions-v5.md`](design-decisions-v5.md) — the cross-participant availability search
-  (`GET /api/meetings/availability`): the one piece of core Doodle behavior (suggest a time that
-  works, instead of requiring one already picked) that was otherwise missing, built by reusing an
-  existing per-user free-slot query across multiple users instead of adding new domain state.
-- [`design-decisions-v6.md`](design-decisions-v6.md) — the conversion of the web layer from
-  WebMvc.fn functional routes to standard `@RestController` classes, deleting the hand-rolled
-  validation/exception-handling infrastructure the functional style had required, with the API
-  contract held fixed by the integration tests.
-- [`design-decisions-v7.md`](design-decisions-v7.md) — per-slot durations on a validation-only
-  time grid: why "create time slots with configurable duration" means the user picks each slot's
-  start and end, and why the grid parameter validates new writes instead of deriving domain data
-  (so changing it can never corrupt existing rows).
-- [`design-decisions-v8.md`](design-decisions-v8.md) — the pre-delivery review-hardening pass:
-  HTTP-agnostic domain exceptions replacing `ResponseStatusException` in services, cancel moved
-  off DELETE-with-body, length caps + a real unique email constraint (including a live-caught
-  lesson about migrations vs. data older code produced), and CI.
+This implementation evolved across eight review/design passes, each recorded in its own
+append-only log under [`docs/decisions/`](docs/decisions/) rather than merged into one — from the
+original spec-compliance review through the propose/vote/confirm meeting model, pagination,
+cross-participant availability, the move to `@RestController`, per-slot durations, and the
+pre-delivery hardening pass. [`conventions.md`](docs/conventions.md)'s "Git and documentation"
+section indexes what each log covers and which code to read it before touching.
 
 How we work — architecture, conventions, and the principles behind all of the above — is written up
-declaratively in [`conventions.md`](conventions.md), and
-[`requirements-mapping.md`](requirements-mapping.md) ties each of the brief's requirements to the
+declaratively in [`conventions.md`](docs/conventions.md), and
+[`requirements-mapping.md`](docs/requirements-mapping.md) ties each of the brief's requirements to the
 relevant implementation and decision log.
 
 (The original take-home prompt isn't included in this repo, since take-home exercises are typically
-not meant to be republished — its requirements are summarized in `spec-review.md`.)
+not meant to be republished — its requirements are summarized in `docs/decisions/spec-review.md`.)
