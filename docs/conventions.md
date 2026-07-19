@@ -5,8 +5,9 @@ coding conventions, design principles, and working practices. It is declarative 
 do things" — not a decision log. The *why* behind non-obvious choices lives in the decision logs
 under [`decisions/`](decisions/) ([`spec-review.md`](decisions/spec-review.md) through
 [`design-decisions-v8.md`](decisions/design-decisions-v8.md) — see "Git and documentation" below
-for which log covers what), which are historical records and are never rewritten. When a practice
-changes, this file is updated in the same commit as the change that breaks it.
+for which log covers what), which are historical records: findings are never re-fixed or merged
+away, though a log may carry a brief pointer to whichever later pass superseded it. When a
+practice changes, this file is updated in the same commit as the change that breaks it.
 
 ## Stack and baseline
 
@@ -245,8 +246,9 @@ Three layers, each testing what only it can test:
     requirement-visible behavior.
   - `conventions.md` (this file) — normative "how we work."
   - [`decisions/`](decisions/) — append-only historical records, one per review/design pass; never
-    merged or edited to match the present, and don't re-fix anything a log describes as already
-    fixed:
+    merged, and don't re-fix anything a log describes as already fixed. A log may gain a short
+    pointer to whichever later pass superseded a given finding — that's editing for navigation, not
+    rewriting the finding itself:
     - [`spec-review.md`](decisions/spec-review.md) (v1) — spec-compliance pass on the original
       single-slot meeting model: dead bean validation, the TOCTOU race and the calendar-level lock
       that fixed it, an O(n) collection load on every slot create.
